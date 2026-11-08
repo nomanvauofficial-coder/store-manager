@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { useStore } from '@/lib/store';
+import { supabase } from '@/lib/supabase';
+import { AuthGate } from '@/components/auth-gate';
 import { Product, Sale, SaleItem } from '@/lib/types';
 import {
   format, startOfDay, startOfWeek, startOfMonth, endOfDay, endOfWeek, endOfMonth,
@@ -25,7 +27,7 @@ import { Toaster } from '@/components/ui/toaster';
 import {
   ShoppingCart, Package, TrendingUp, Plus, Minus, Trash2, Pencil, Search, CreditCard,
   Wallet, Receipt, AlertCircle, X, Scale, Home as HomeIcon, Users, BarChart3, Phone,
-  Banknote, type LucideIcon,
+  Banknote, LogOut, type LucideIcon,
 } from 'lucide-react';
 import {
   BarChart as RechartsBar, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -100,15 +102,6 @@ function useCustomerDues() {
 /* ------------------------------------------------------------------ */
 /* Small shared UI pieces                                              */
 /* ------------------------------------------------------------------ */
-
-function LoadingScreen() {
-  return (
-    <div className="min-h-dvh flex flex-col items-center justify-center gap-3 bg-gray-50">
-      <div className="h-9 w-9 rounded-full border-4 border-purple-200 border-t-purple-600 animate-spin" />
-      <p className="text-sm text-gray-500">Loading Store Manager…</p>
-    </div>
-  );
-}
 
 function EmptyState({ icon: Icon, text, action }: { icon: LucideIcon; text: string; action?: React.ReactNode }) {
   return (
@@ -225,29 +218,22 @@ const NAV: { id: string; label: string; icon: LucideIcon }[] = [
   { id: 'reports', label: 'Reports', icon: BarChart3 },
 ];
 
-function useIsClient() {
-  const [isClient, setIsClient] = useState(false);
-  useEffect(() => setIsClient(true), []);
-  return isClient;
+export default function Page() {
+  return (
+    <AuthGate>
+      <Home />
+    </AuthGate>
+  );
 }
 
-export default function Home() {
-  const isClient = useIsClient();
+function Home() {
   const [activeTab, setActiveTab] = useState('dashboard');
-  const loadData = useStore(s => s.loadData);
-  const loaded = useStore(s => (s as unknown as { _loaded: boolean })._loaded);
   const lowStockCount = useStore(s => s.products.filter(p => p.stock <= LOW_STOCK).length);
-
-  useEffect(() => {
-    if (isClient) loadData();
-  }, [isClient, loadData]);
 
   const go = (tab: string) => {
     setActiveTab(tab);
     window.scrollTo({ top: 0 });
   };
-
-  if (!isClient || !loaded) return <LoadingScreen />;
 
   return (
     <div className="min-h-dvh bg-gray-50">
@@ -259,7 +245,13 @@ export default function Home() {
             </span>
             Store Manager
           </h1>
-          <span className="text-xs text-gray-500 sm:text-sm">{format(new Date(), 'EEE, MMM d')}</span>
+          <div className="flex items-center gap-1">
+            <span className="text-xs text-gray-500 sm:text-sm">{format(new Date(), 'EEE, MMM d')}</span>
+            <Button variant="ghost" size="icon" className="h-9 w-9" aria-label="Sign out"
+              onClick={() => supabase.auth.signOut()}>
+              <LogOut className="h-4 w-4 text-gray-500" />
+            </Button>
+          </div>
         </div>
       </header>
 
