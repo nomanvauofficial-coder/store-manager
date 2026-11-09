@@ -75,6 +75,16 @@ function inRange(iso: string, range: Range) {
 const byNewest = <T extends { createdAt: string }>(a: T, b: T) =>
   new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
 
+const getCategories = (products: Product[]) =>
+  Array.from(new Set(products.map(p => p.category || 'General'))).sort((a, b) => a.localeCompare(b));
+
+// Reuse an existing category if the same name is typed again (any letter case)
+const normalizeCategory = (value: string, existing: string[]) => {
+  const v = value.trim();
+  if (!v) return 'General';
+  return existing.find(c => c.toLowerCase() === v.toLowerCase()) ?? v;
+};
+
 const saleSummary = (sale: Sale) =>
   sale.items
     .map(i => `${i.productName} ${i.pricingType === 'weight' ? `${i.weight ?? i.quantity}kg` : `×${i.quantity}`}`)
@@ -172,6 +182,31 @@ function SearchBar({ value, onChange, placeholder }: { value: string; onChange: 
         onChange={e => onChange(e.target.value)}
         className="h-10 pl-9"
       />
+    </div>
+  );
+}
+
+function CategoryChips({
+  categories, value, onChange, counts, allLabel = 'All', className = '',
+}: {
+  categories: string[]; value: string; onChange: (c: string) => void;
+  counts?: Record<string, number>; allLabel?: string; className?: string;
+}) {
+  const chip = (active: boolean) =>
+    `h-8 shrink-0 rounded-full border px-3 text-xs font-medium transition-colors ${
+      active ? 'border-purple-600 bg-purple-600 text-white' : 'bg-white text-gray-700 active:bg-gray-100'
+    }`;
+  const total = counts ? Object.values(counts).reduce((a, b) => a + b, 0) : undefined;
+  return (
+    <div className={`flex gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none] ${className}`} role="tablist" aria-label="Categories">
+      <button role="tab" aria-selected={value === ''} className={chip(value === '')} onClick={() => onChange('')}>
+        {allLabel}{total !== undefined && ` · ${total}`}
+      </button>
+      {categories.map(c => (
+        <button key={c} role="tab" aria-selected={value === c} className={chip(value === c)} onClick={() => onChange(c)}>
+          {c}{counts && ` · ${counts[c] ?? 0}`}
+        </button>
+      ))}
     </div>
   );
 }
@@ -512,6 +547,7 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
 
   const [items, setItems] = useState<SaleItem[]>([]);
   const [search, setSearch] = useState('');
+  const [saleCat, setSaleCat] = useState('');
   const [selectedId, setSelectedId] = useState('');
   const [qty, setQty] = useState('1');
   const [weight, setWeight] = useState('');
@@ -520,7 +556,7 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
 
   useEffect(() => {
     if (!open) {
-      setItems([]); setSearch(''); setSelectedId(''); setQty('1'); setWeight('');
+      setItems([]); setSearch(''); setSaleCat(''); setSelectedId(''); setQty('1'); setWeight('');
       setPaymentType('cash'); setCustomerId('');
     }
   }, [open]);
@@ -535,9 +571,13 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
   const matches = useMemo(() => {
     const q = search.trim().toLowerCase();
     return products
-      .filter(p => p.stock > 0 && (!q || `${p.name} ${p.category ?? ''}`.toLowerCase().includes(q)))
+      .filter(p => p.stock > 0
+        && (!saleCat || (p.category || 'General') === saleCat)
+        && (!q || `${p.name} ${p.category ?? ''}`.toLowerCase().includes(q)))
       .slice(0, 30);
-  }, [products, search]);
+  }, [products, search, saleCat]);
+
+  const saleCategories = useMemo(() => getCategories(products.filter(p => p.stock > 0)), [products]);
 
   const addItem = () => {
     if (!selected) return;
@@ -592,6 +632,9 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
           {!selected ? (
             <div className="space-y-2">
               <SearchBar value={search} onChange={setSearch} placeholder="Search product…" />
+              {saleCategories.length > 1 && (
+                <CategoryChips categories={saleCategories} value={saleCat} onChange={setSaleCat} />
+              )}
               <div className="max-h-44 divide-y overflow-y-auto rounded-lg border">
                 {matches.length === 0 ? (
                   <p className="p-4 text-center text-sm text-gray-500">No product in stock</p>
@@ -732,7 +775,9 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
 /* Products                                                            */
 /* ------------------------------------------------------------------ */
 
-function ProductFormDialog({ open, onClose, product }: { open: boolean; onClose: () => void; product?: Product | null }) {
+function ProductFormDialog({
+  open, onClose, product, defaultCategory,
+}: { open: boolean; onClose: () => void; product?: Product | null; defaultCategory?: string }) {
   const products = useStore(s => s.products);
   const addProduct = useStore(s => s.addProduct);
   const updateProduct = useStore(s => s.updateProduct);
@@ -746,14 +791,11 @@ function ProductFormDialog({ open, onClose, product }: { open: boolean; onClose:
         name: product.name, price: String(product.price), stock: String(product.stock),
         category: product.category || '', pricingType: product.pricingType || 'fixed',
       }
-      : empty);
+      : { ...empty, category: defaultCategory || '' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, product]);
+  }, [open, product, defaultCategory]);
 
-  const categories = useMemo(
-    () => Array.from(new Set(products.map(p => p.category).filter(Boolean))),
-    [products],
-  );
+  const categories = useMemo(() => getCategories(products), [products]);
 
   const submit = () => {
     const price = Number(form.price);
@@ -764,7 +806,7 @@ function ProductFormDialog({ open, onClose, product }: { open: boolean; onClose:
     }
     const data = {
       name: form.name.trim(), price, stock,
-      category: form.category.trim() || 'General',
+      category: normalizeCategory(form.category, categories),
       pricingType: form.pricingType,
       unit: form.pricingType === 'weight' ? 'kg' : 'pcs',
     };
@@ -814,9 +856,23 @@ function ProductFormDialog({ open, onClose, product }: { open: boolean; onClose:
 
           <div className="space-y-1.5">
             <Label htmlFor="p-cat">Category</Label>
-            <Input id="p-cat" list="category-list" className="h-11" placeholder="e.g. Food, Drinks, Grocery"
+            {categories.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {categories.map(c => {
+                  const active = form.category.trim().toLowerCase() === c.toLowerCase();
+                  return (
+                    <button key={c} type="button" onClick={() => setForm({ ...form, category: c })}
+                      className={`h-8 rounded-full border px-3 text-xs font-medium ${
+                        active ? 'border-purple-600 bg-purple-600 text-white' : 'bg-white text-gray-700 active:bg-gray-100'
+                      }`}>
+                      {c}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <Input id="p-cat" className="h-11" placeholder={categories.length ? 'Or type a new category' : 'e.g. Drinks, Snacks, Grocery'}
               value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} />
-            <datalist id="category-list">{categories.map(c => <option key={c} value={c} />)}</datalist>
           </div>
         </div>
         <div className="flex gap-2 pt-1">
@@ -836,10 +892,23 @@ function ProductManagement() {
   const [editing, setEditing] = useState<Product | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
+  const [cat, setCat] = useState('');
+
+  const categories = useMemo(() => getCategories(products), [products]);
+  const counts = useMemo(() => {
+    const m: Record<string, number> = {};
+    products.forEach(p => { const c = p.category || 'General'; m[c] = (m[c] || 0) + 1; });
+    return m;
+  }, [products]);
+  const activeCat = categories.includes(cat) ? cat : ''; // falls back to "All" if the category became empty
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return products.filter(p => !q || p.name.toLowerCase().includes(q) || p.category?.toLowerCase().includes(q));
-  }, [products, search]);
+    return products
+      .filter(p => (!activeCat || (p.category || 'General') === activeCat)
+        && (!q || p.name.toLowerCase().includes(q) || p.category?.toLowerCase().includes(q)))
+      .sort((a, b) => (a.category || 'General').localeCompare(b.category || 'General') || a.name.localeCompare(b.name));
+  }, [products, search, activeCat]);
 
   const openAdd = () => { setEditing(null); setFormOpen(true); };
   const openEdit = (p: Product) => { setEditing(p); setFormOpen(true); };
@@ -848,8 +917,13 @@ function ProductManagement() {
     <div className="space-y-3 sm:space-y-4">
       <div className="flex gap-2">
         <SearchBar value={search} onChange={setSearch} placeholder="Search products…" />
-        <Button onClick={openAdd} className={`h-10 shrink-0 ${PRIMARY_BTN}`}><Plus /> <span className="max-sm:hidden">Add Product</span><span className="sm:hidden">Add</span></Button>
+        <Button onClick={openAdd} className={`h-10 shrink-0 ${PRIMARY_BTN}`}><Plus /> <span className="max-sm:hidden">{activeCat ? `Add to ${activeCat}` : 'Add Product'}</span><span className="sm:hidden">Add</span></Button>
       </div>
+
+      {categories.length > 0 && (
+        <CategoryChips categories={categories} counts={counts} value={activeCat} onChange={setCat}
+          className="-mx-3 px-3 sm:mx-0 sm:px-0" />
+      )}
 
       <Card className="gap-0 overflow-hidden py-0 shadow-sm">
         <CardContent className="p-0">
@@ -920,7 +994,7 @@ function ProductManagement() {
         </CardContent>
       </Card>
 
-      <ProductFormDialog open={formOpen} onClose={() => setFormOpen(false)} product={editing} />
+      <ProductFormDialog open={formOpen} onClose={() => setFormOpen(false)} product={editing} defaultCategory={activeCat} />
       <ConfirmDialog
         open={!!deleteId} title="Delete product?" description="This action cannot be undone."
         onCancel={() => setDeleteId(null)}
