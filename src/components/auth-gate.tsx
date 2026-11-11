@@ -12,10 +12,10 @@ type Status = 'checking' | 'signed-out' | 'denied' | 'error' | 'ready';
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-dvh items-center justify-center bg-gray-50 p-4">
+    <div className="flex min-h-dvh items-center justify-center bg-slate-50 p-4">
       <div className="w-full max-w-sm rounded-2xl border bg-white p-5 shadow-sm">
         <div className="mb-4 flex items-center gap-2">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-purple-600 text-white">
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-700 text-white">
             <Package className="h-5 w-5" />
           </span>
           <h1 className="text-lg font-bold">Store Manager</h1>
@@ -66,12 +66,12 @@ function LoginForm() {
             value={password} onChange={e => setPassword(e.target.value)} />
         </div>
         {msg && (
-          <p className={`text-sm ${msg.type === 'error' ? 'text-red-600' : 'text-green-700'}`}>{msg.text}</p>
+          <p className={`text-sm ${msg.type === 'error' ? 'text-red-600' : 'text-emerald-700'}`}>{msg.text}</p>
         )}
-        <Button type="submit" disabled={busy} className="h-11 w-full bg-purple-600 text-white hover:bg-purple-700">
+        <Button type="submit" disabled={busy} className="h-11 w-full bg-blue-700 text-white hover:bg-blue-800">
           {busy ? 'Please wait…' : mode === 'in' ? 'Sign in' : 'Create account'}
         </Button>
-        <button type="button" className="w-full text-center text-sm text-purple-700"
+        <button type="button" className="w-full text-center text-sm text-blue-700"
           onClick={() => { setMode(mode === 'in' ? 'up' : 'in'); setMsg(null); }}>
           {mode === 'in' ? 'First time? Create account' : 'Already have an account? Sign in'}
         </button>
@@ -122,9 +122,9 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   if (status === 'checking')
     return (
-      <div className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-gray-50">
-        <div className="h-9 w-9 animate-spin rounded-full border-4 border-purple-200 border-t-purple-600" />
-        <p className="text-sm text-gray-500">Loading Store Manager…</p>
+      <div className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-slate-50">
+        <div className="h-9 w-9 animate-spin rounded-full border-4 border-blue-200 border-t-blue-700" />
+        <p className="text-sm text-slate-500">Loading Store Manager…</p>
       </div>
     );
 
@@ -133,14 +133,14 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   if (status === 'denied' || status === 'error')
     return (
       <Shell>
-        <p className="text-sm text-gray-700">
+        <p className="text-sm text-slate-700">
           {status === 'denied'
             ? 'This account does not have access to this store. Ask the owner to give you access, or sign in with the owner account.'
             : `Could not connect: ${errorText}`}
         </p>
         <div className="mt-4 flex gap-2">
           {status === 'error' && (
-            <Button className="h-11 flex-1 bg-purple-600 text-white hover:bg-purple-700"
+            <Button className="h-11 flex-1 bg-blue-700 text-white hover:bg-blue-800"
               onClick={() => { currentUser.current = null; supabase.auth.getSession().then(({ data }) => enter(data.session?.user.id ?? null)); }}>
               Retry
             </Button>

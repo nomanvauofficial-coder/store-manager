@@ -38,20 +38,22 @@ import {
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
 
-const COLORS = ['#7c3aed', '#10b981', '#f59e0b', '#ef4444', '#3b82f6', '#ec4899'];
+const COLORS = ['#1d4ed8', '#0d9488', '#d97706', '#dc2626', '#64748b', '#0891b2'];
 const LOW_STOCK = 5;
 
 // Bangladeshi Taka, with thousand separators, no useless ".00"
 const formatCurrency = (amount: number) =>
   `৳${amount.toLocaleString('en-BD', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 
-// Bottom-sheet on mobile, centered dialog on >= sm
+// Mobile: the sheet hugs the TOP of the visible area and shrinks when the keyboard opens,
+// so the form and its buttons never hide behind the keyboard.
 const SHEET =
-  'p-4 sm:p-6 max-h-[92dvh] overflow-y-auto max-sm:top-auto max-sm:bottom-0 max-sm:left-0 ' +
-  'max-sm:translate-x-0 max-sm:translate-y-0 max-sm:max-w-full max-sm:rounded-b-none ' +
-  'max-sm:rounded-t-2xl max-sm:pb-[calc(1rem+env(safe-area-inset-bottom))]';
+  'bg-white p-4 sm:p-6 sm:max-h-[90dvh] overflow-y-auto overscroll-contain ' +
+  'max-sm:top-[calc(var(--vvt,0px)+8px)] max-sm:bottom-auto max-sm:left-2 max-sm:right-2 ' +
+  'max-sm:w-auto max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 ' +
+  'max-sm:max-h-[calc(var(--vvh,100dvh)-16px)] max-sm:rounded-2xl max-sm:pb-3';
 
-const PRIMARY_BTN = 'bg-purple-600 text-white hover:bg-purple-700';
+const PRIMARY_BTN = 'bg-blue-700 text-white hover:bg-blue-800';
 
 type Range = 'all' | 'today' | 'week' | 'month';
 const RANGES: { id: Range; label: string }[] = [
@@ -113,10 +115,42 @@ function useCustomerDues() {
 /* Small shared UI pieces                                              */
 /* ------------------------------------------------------------------ */
 
+// Keeps --vvh / --vvt in sync with the visible area (changes when the phone keyboard opens)
+function useVisualViewport() {
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const root = document.documentElement.style;
+    const sync = () => {
+      root.setProperty('--vvh', `${vv.height}px`);
+      root.setProperty('--vvt', `${vv.offsetTop}px`);
+    };
+    sync();
+    vv.addEventListener('resize', sync);
+    vv.addEventListener('scroll', sync);
+    return () => {
+      vv.removeEventListener('resize', sync);
+      vv.removeEventListener('scroll', sync);
+      root.removeProperty('--vvh');
+      root.removeProperty('--vvt');
+    };
+  }, []);
+}
+
+// Buttons stay visible at the bottom of the form, right above the keyboard
+function FormActions({ onCancel, label, submitClass = PRIMARY_BTN }: { onCancel: () => void; label: string; submitClass?: string }) {
+  return (
+    <div className="sticky bottom-0 -mx-4 flex gap-2 border-t bg-white px-4 pb-0.5 pt-3 sm:mx-0 sm:border-0 sm:px-0 sm:pt-1">
+      <Button type="button" variant="outline" className="h-11 flex-1" onClick={onCancel}>Cancel</Button>
+      <Button type="submit" className={`h-11 flex-1 ${submitClass}`}>{label}</Button>
+    </div>
+  );
+}
+
 function EmptyState({ icon: Icon, text, action }: { icon: LucideIcon; text: string; action?: React.ReactNode }) {
   return (
-    <div className="flex flex-col items-center gap-2 py-10 text-center text-gray-500">
-      <Icon className="h-8 w-8 text-gray-300" />
+    <div className="flex flex-col items-center gap-2 py-10 text-center text-slate-500">
+      <Icon className="h-8 w-8 text-slate-300" />
       <p className="text-sm">{text}</p>
       {action}
     </div>
@@ -125,7 +159,7 @@ function EmptyState({ icon: Icon, text, action }: { icon: LucideIcon; text: stri
 
 function RangeTabs({ value, onChange }: { value: Range; onChange: (r: Range) => void }) {
   return (
-    <div className="grid grid-cols-4 gap-1 rounded-lg bg-gray-100 p-1 sm:w-72" role="tablist">
+    <div className="grid grid-cols-4 gap-1 rounded-lg bg-slate-100 p-1 sm:w-72" role="tablist">
       {RANGES.map(r => (
         <button
           key={r.id}
@@ -133,7 +167,7 @@ function RangeTabs({ value, onChange }: { value: Range; onChange: (r: Range) => 
           aria-selected={value === r.id}
           onClick={() => onChange(r.id)}
           className={`h-8 rounded-md text-xs font-medium transition-colors ${
-            value === r.id ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-600'
+            value === r.id ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600'
           }`}
         >
           {r.label}
@@ -173,7 +207,7 @@ function ConfirmDialog({
 function SearchBar({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
   return (
     <div className="relative flex-1">
-      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
       <Input
         type="search"
         aria-label={placeholder}
@@ -194,7 +228,7 @@ function CategoryChips({
 }) {
   const chip = (active: boolean) =>
     `h-8 shrink-0 rounded-full border px-3 text-xs font-medium transition-colors ${
-      active ? 'border-purple-600 bg-purple-600 text-white' : 'bg-white text-gray-700 active:bg-gray-100'
+      active ? 'border-blue-700 bg-blue-700 text-white' : 'bg-white text-slate-700 active:bg-slate-100'
     }`;
   const total = counts ? Object.values(counts).reduce((a, b) => a + b, 0) : undefined;
   return (
@@ -212,11 +246,11 @@ function CategoryChips({
 }
 
 const TONES = {
-  green: { card: 'border-green-100 bg-green-50/60', icon: 'bg-green-100 text-green-600', value: 'text-green-700' },
-  orange: { card: 'border-orange-100 bg-orange-50/60', icon: 'bg-orange-100 text-orange-600', value: 'text-orange-700' },
+  green: { card: 'border-slate-200 bg-white', icon: 'bg-emerald-50 text-emerald-600', value: 'text-slate-900' },
+  orange: { card: 'border-slate-200 bg-white', icon: 'bg-amber-50 text-amber-600', value: 'text-slate-900' },
   red: { card: 'border-red-200 bg-red-50/60', icon: 'bg-red-100 text-red-600', value: 'text-red-700' },
-  gray: { card: 'border-gray-200 bg-white', icon: 'bg-gray-100 text-gray-400', value: 'text-gray-900' },
-  blue: { card: 'border-blue-100 bg-blue-50/60', icon: 'bg-blue-100 text-blue-600', value: 'text-blue-700' },
+  gray: { card: 'border-slate-200 bg-white', icon: 'bg-slate-100 text-slate-400', value: 'text-slate-900' },
+  blue: { card: 'border-slate-200 bg-white', icon: 'bg-blue-50 text-blue-700', value: 'text-slate-900' },
 } as const;
 
 function StatCard({
@@ -226,16 +260,16 @@ function StatCard({
   return (
     <button
       onClick={onClick}
-      className={`rounded-xl border p-3 text-left transition-colors active:bg-gray-100 sm:p-4 ${t.card}`}
+      className={`rounded-xl border p-3 text-left transition-colors active:bg-slate-100 sm:p-4 ${t.card}`}
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-medium text-gray-600">{label}</span>
+        <span className="text-xs font-medium text-slate-600">{label}</span>
         <span className={`flex h-7 w-7 items-center justify-center rounded-full ${t.icon}`}>
           <Icon className="h-4 w-4" />
         </span>
       </div>
       <div className={`mt-1 truncate text-lg font-bold sm:text-2xl ${t.value}`}>{value}</div>
-      <p className="truncate text-[11px] text-gray-500">{sub}</p>
+      <p className="truncate text-[11px] text-slate-500">{sub}</p>
     </button>
   );
 }
@@ -262,6 +296,7 @@ export default function Page() {
 }
 
 function Home() {
+  useVisualViewport();
   const [activeTab, setActiveTab] = useState('dashboard');
   const lowStockCount = useStore(s => s.products.filter(p => p.stock <= LOW_STOCK).length);
 
@@ -271,20 +306,20 @@ function Home() {
   };
 
   return (
-    <div className="min-h-dvh bg-gray-50">
+    <div className="min-h-dvh bg-slate-50">
       <header className="sticky top-0 z-40 border-b bg-white/90 pt-[env(safe-area-inset-top)] backdrop-blur">
         <div className="mx-auto flex h-12 max-w-7xl items-center justify-between px-3 sm:h-14 sm:px-4">
-          <h1 className="flex items-center gap-2 text-base font-bold text-gray-900 sm:text-xl">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-purple-600 text-white">
+          <h1 className="flex items-center gap-2 text-base font-bold text-slate-900 sm:text-xl">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-700 text-white">
               <Package className="h-4 w-4" />
             </span>
             Store Manager
           </h1>
           <div className="flex items-center gap-1">
-            <span className="text-xs text-gray-500 sm:text-sm">{format(new Date(), 'EEE, MMM d')}</span>
+            <span className="text-xs text-slate-500 sm:text-sm">{format(new Date(), 'EEE, MMM d')}</span>
             <Button variant="ghost" size="icon" className="h-9 w-9" aria-label="Sign out"
               onClick={() => supabase.auth.signOut()}>
-              <LogOut className="h-4 w-4 text-gray-500" />
+              <LogOut className="h-4 w-4 text-slate-500" />
             </Button>
           </div>
         </div>
@@ -323,10 +358,10 @@ function Home() {
                 onClick={() => go(n.id)}
                 aria-current={active ? 'page' : undefined}
                 className={`relative flex h-14 flex-col items-center justify-center gap-0.5 text-[10px] font-medium ${
-                  active ? 'text-purple-600' : 'text-gray-500'
+                  active ? 'text-blue-700' : 'text-slate-500'
                 }`}
               >
-                {active && <span className="absolute top-0 h-0.5 w-8 rounded-full bg-purple-600" />}
+                {active && <span className="absolute top-0 h-0.5 w-8 rounded-full bg-blue-700" />}
                 <Icon className="h-5 w-5" />
                 {n.label}
                 {n.id === 'products' && lowStockCount > 0 && (
@@ -408,7 +443,7 @@ function Dashboard({ go }: { go: (tab: string) => void }) {
         <CardHeader className="flex flex-row items-center justify-between px-3 py-3 sm:px-6">
           <CardTitle className="text-sm sm:text-lg">Recent Sales</CardTitle>
           {sales.length > 5 && (
-            <Button variant="ghost" size="sm" className="h-8 text-xs text-purple-600" onClick={() => go('sales')}>
+            <Button variant="ghost" size="sm" className="h-8 text-xs text-blue-700" onClick={() => go('sales')}>
               View all
             </Button>
           )}
@@ -443,13 +478,13 @@ function SalesList({
           <li key={sale.id} className="flex items-center gap-2 px-3 py-2.5">
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium">{saleSummary(sale)}</p>
-              <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-gray-500">
+              <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500">
                 {format(new Date(sale.createdAt), 'MMM d, h:mm a')}
                 <PaymentBadge type={sale.paymentType} />
                 {sale.customerName && <span className="truncate">· {sale.customerName}</span>}
               </p>
             </div>
-            <span className="text-sm font-semibold text-green-600">{formatCurrency(sale.total)}</span>
+            <span className="text-sm font-semibold text-emerald-600">{formatCurrency(sale.total)}</span>
             {onDelete && (
               <Button variant="ghost" size="icon" className="h-10 w-10 shrink-0" aria-label="Delete sale" onClick={() => onDelete(sale.id)}>
                 <Trash2 className="h-4 w-4 text-red-500" />
@@ -462,7 +497,7 @@ function SalesList({
       <div className="hidden overflow-x-auto sm:block">
         <Table>
           <TableHeader>
-            <TableRow className="bg-gray-50">
+            <TableRow className="bg-slate-50">
               <TableHead>Date</TableHead>
               <TableHead>Items</TableHead>
               <TableHead>Payment</TableHead>
@@ -478,7 +513,7 @@ function SalesList({
                 <TableCell className="max-w-xs truncate text-xs">{saleSummary(sale)}</TableCell>
                 <TableCell><PaymentBadge type={sale.paymentType} /></TableCell>
                 <TableCell className="text-xs">{sale.customerName || '-'}</TableCell>
-                <TableCell className="text-right text-xs font-medium text-green-600">{formatCurrency(sale.total)}</TableCell>
+                <TableCell className="text-right text-xs font-medium text-emerald-600">{formatCurrency(sale.total)}</TableCell>
                 {onDelete && (
                   <TableCell className="text-right">
                     <Button variant="ghost" size="icon" aria-label="Delete sale" onClick={() => onDelete(sale.id)}>
@@ -515,8 +550,8 @@ function SalesModule() {
       </div>
 
       <div className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-sm shadow-sm">
-        <span className="text-gray-500">{filtered.length} sales</span>
-        <span className="font-semibold text-green-700">{formatCurrency(total)}</span>
+        <span className="text-slate-500">{filtered.length} sales</span>
+        <span className="font-semibold text-emerald-700">{formatCurrency(total)}</span>
       </div>
 
       <Card className="gap-0 overflow-hidden py-0 shadow-sm">
@@ -637,27 +672,27 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
               )}
               <div className="max-h-44 divide-y overflow-y-auto rounded-lg border">
                 {matches.length === 0 ? (
-                  <p className="p-4 text-center text-sm text-gray-500">No product in stock</p>
+                  <p className="p-4 text-center text-sm text-slate-500">No product in stock</p>
                 ) : matches.map(p => (
                   <button
                     key={p.id}
                     onClick={() => { setSelectedId(p.id); setQty('1'); setWeight(''); }}
-                    className="flex w-full items-center gap-2 px-3 py-2.5 text-left active:bg-gray-100"
+                    className="flex w-full items-center gap-2 px-3 py-2.5 text-left active:bg-slate-100"
                   >
-                    {p.pricingType === 'weight' && <Scale className="h-3.5 w-3.5 shrink-0 text-purple-500" />}
+                    {p.pricingType === 'weight' && <Scale className="h-3.5 w-3.5 shrink-0 text-blue-600" />}
                     <span className="min-w-0 flex-1 truncate text-sm font-medium">{p.name}</span>
-                    <span className="text-xs text-gray-500">{p.stock} {p.unit}</span>
+                    <span className="text-xs text-slate-500">{p.stock} {p.unit}</span>
                     <span className="text-sm font-semibold">{formatCurrency(p.price)}{p.pricingType === 'weight' && '/kg'}</span>
                   </button>
                 ))}
               </div>
             </div>
           ) : (
-            <div className="space-y-3 rounded-lg border border-purple-200 bg-purple-50/50 p-3">
+            <div className="space-y-3 rounded-lg border border-blue-200 bg-blue-50/50 p-3">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold">{selected.name}</p>
-                  <p className="text-xs text-gray-600">
+                  <p className="text-xs text-slate-600">
                     {formatCurrency(selected.price)}/{isWeight ? 'kg' : 'pcs'} · Available {available} {selected.unit}
                   </p>
                 </div>
@@ -678,7 +713,7 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
                   <div className="flex gap-1.5">
                     {['0.25', '0.5', '1', '2'].map(w => (
                       <button key={w} onClick={() => setWeight(w)}
-                        className="h-8 flex-1 rounded-md border bg-white text-xs font-medium active:bg-gray-100">
+                        className="h-8 flex-1 rounded-md border bg-white text-xs font-medium active:bg-slate-100">
                         {w} kg
                       </button>
                     ))}
@@ -707,7 +742,7 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
                 </div>
               )}
               {isWeight && amount > 0 && (
-                <p className="text-right text-xs text-gray-600">= {formatCurrency(amount * selected.price)}</p>
+                <p className="text-right text-xs text-slate-600">= {formatCurrency(amount * selected.price)}</p>
               )}
             </div>
           )}
@@ -719,7 +754,7 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
                 <li key={item.productId} className="flex items-center gap-2 px-3 py-2">
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">{item.productName}</p>
-                    <p className="text-xs text-gray-500">
+                    <p className="text-xs text-slate-500">
                       {item.pricingType === 'weight' ? `${item.weight} kg` : `${item.quantity} pcs`} × {formatCurrency(item.price)}
                     </p>
                   </div>
@@ -747,7 +782,7 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
             <Select value={customerId} onValueChange={setCustomerId}>
               <SelectTrigger className="h-11 w-full" aria-label="Customer"><SelectValue placeholder="Select customer" /></SelectTrigger>
               <SelectContent>
-                {customers.length === 0 && <div className="p-3 text-sm text-gray-500">Add a customer first</div>}
+                {customers.length === 0 && <div className="p-3 text-sm text-slate-500">Add a customer first</div>}
                 {customers.map(c => (
                   <SelectItem key={c.id} value={c.id}>{c.name}{c.phone && ` · ${c.phone}`}</SelectItem>
                 ))}
@@ -757,12 +792,12 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
         </div>
 
         {/* Sticky total + action */}
-        <div className="sticky bottom-0 -mx-4 flex items-center gap-3 border-t bg-background px-4 pt-3 sm:mx-0 sm:px-0">
+        <div className="sticky bottom-0 -mx-4 flex items-center gap-3 border-t bg-white px-4 pt-3 sm:mx-0 sm:px-0">
           <div className="leading-tight">
-            <p className="text-[11px] text-gray-500">Total</p>
-            <p className="text-xl font-bold text-green-700">{formatCurrency(total)}</p>
+            <p className="text-[11px] text-slate-500">Total</p>
+            <p className="text-xl font-bold text-emerald-700">{formatCurrency(total)}</p>
           </div>
-          <Button onClick={handleSubmit} disabled={items.length === 0} className="h-11 flex-1 bg-green-600 text-white hover:bg-green-700">
+          <Button onClick={handleSubmit} disabled={items.length === 0} className="h-11 flex-1 bg-emerald-600 text-white hover:bg-emerald-700">
             Complete Sale
           </Button>
         </div>
@@ -826,16 +861,16 @@ function ProductFormDialog({
     <Dialog open={open} onOpenChange={o => { if (!o) onClose(); }}>
       <DialogContent className={`${SHEET} sm:max-w-md`}>
         <DialogHeader><DialogTitle>{product ? 'Edit Product' : 'Add Product'}</DialogTitle></DialogHeader>
-        <div className="space-y-3">
+        <form className="space-y-3" onSubmit={e => { e.preventDefault(); submit(); }}>
           <div className="space-y-1.5">
             <Label htmlFor="p-name">Name *</Label>
             <Input id="p-name" className="h-11" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
           </div>
 
-          <div className="grid grid-cols-2 gap-1 rounded-lg bg-gray-100 p-1">
+          <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1">
             {(['fixed', 'weight'] as const).map(t => (
-              <button key={t} onClick={() => setForm({ ...form, pricingType: t })}
-                className={`h-9 rounded-md text-sm font-medium ${form.pricingType === t ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-600'}`}>
+              <button key={t} type="button" onClick={() => setForm({ ...form, pricingType: t })}
+                className={`h-9 rounded-md text-sm font-medium ${form.pricingType === t ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600'}`}>
                 {t === 'fixed' ? 'Per piece' : 'Per kg'}
               </button>
             ))}
@@ -863,7 +898,7 @@ function ProductFormDialog({
                   return (
                     <button key={c} type="button" onClick={() => setForm({ ...form, category: c })}
                       className={`h-8 rounded-full border px-3 text-xs font-medium ${
-                        active ? 'border-purple-600 bg-purple-600 text-white' : 'bg-white text-gray-700 active:bg-gray-100'
+                        active ? 'border-blue-700 bg-blue-700 text-white' : 'bg-white text-slate-700 active:bg-slate-100'
                       }`}>
                       {c}
                     </button>
@@ -874,11 +909,8 @@ function ProductFormDialog({
             <Input id="p-cat" className="h-11" placeholder={categories.length ? 'Or type a new category' : 'e.g. Drinks, Snacks, Grocery'}
               value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} />
           </div>
-        </div>
-        <div className="flex gap-2 pt-1">
-          <Button variant="outline" className="h-11 flex-1" onClick={onClose}>Cancel</Button>
-          <Button className={`h-11 flex-1 ${PRIMARY_BTN}`} onClick={submit}>{product ? 'Update' : 'Add'}</Button>
-        </div>
+          <FormActions onCancel={onClose} label={product ? 'Update' : 'Add'} />
+        </form>
       </DialogContent>
     </Dialog>
   );
@@ -936,17 +968,17 @@ function ProductManagement() {
               <ul className="divide-y sm:hidden">
                 {filtered.map(p => (
                   <li key={p.id} className="flex items-center">
-                    <button onClick={() => openEdit(p)} className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left active:bg-gray-50">
+                    <button onClick={() => openEdit(p)} className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left active:bg-slate-50">
                       <div className="min-w-0 flex-1">
                         <p className="flex items-center gap-1.5 truncate text-sm font-medium">
-                          {p.pricingType === 'weight' && <Scale className="h-3.5 w-3.5 shrink-0 text-purple-500" />}
+                          {p.pricingType === 'weight' && <Scale className="h-3.5 w-3.5 shrink-0 text-blue-600" />}
                           <span className="truncate">{p.name}</span>
                         </p>
-                        <p className="text-[11px] text-gray-500">{p.category || 'General'}</p>
+                        <p className="text-[11px] text-slate-500">{p.category || 'General'}</p>
                       </div>
                       <div className="text-right">
-                        <p className="text-sm font-semibold">{formatCurrency(p.price)}{p.pricingType === 'weight' && <span className="text-[10px] font-normal text-gray-400">/kg</span>}</p>
-                        <p className={`text-[11px] ${p.stock <= LOW_STOCK ? 'font-semibold text-red-600' : 'text-gray-500'}`}>
+                        <p className="text-sm font-semibold">{formatCurrency(p.price)}{p.pricingType === 'weight' && <span className="text-[10px] font-normal text-slate-400">/kg</span>}</p>
+                        <p className={`text-[11px] ${p.stock <= LOW_STOCK ? 'font-semibold text-red-600' : 'text-slate-500'}`}>
                           {p.stock} {p.unit}
                         </p>
                       </div>
@@ -962,7 +994,7 @@ function ProductManagement() {
               <div className="hidden overflow-x-auto sm:block">
                 <Table>
                   <TableHeader>
-                    <TableRow className="bg-gray-50">
+                    <TableRow className="bg-slate-50">
                       <TableHead>Name</TableHead><TableHead>Type</TableHead>
                       <TableHead className="text-right">Price</TableHead><TableHead className="text-right">Stock</TableHead>
                       <TableHead>Category</TableHead><TableHead className="text-right">Actions</TableHead>
@@ -973,11 +1005,11 @@ function ProductManagement() {
                       <TableRow key={p.id}>
                         <TableCell className="font-medium">
                           <span className="flex items-center gap-2">
-                            {p.pricingType === 'weight' && <Scale className="h-4 w-4 text-purple-500" />}{p.name}
+                            {p.pricingType === 'weight' && <Scale className="h-4 w-4 text-blue-600" />}{p.name}
                           </span>
                         </TableCell>
                         <TableCell><Badge variant={p.pricingType === 'weight' ? 'default' : 'secondary'}>{p.pricingType === 'weight' ? 'Per KG' : 'Fixed'}</Badge></TableCell>
-                        <TableCell className="text-right">{formatCurrency(p.price)}{p.pricingType === 'weight' && <span className="text-xs text-gray-400">/kg</span>}</TableCell>
+                        <TableCell className="text-right">{formatCurrency(p.price)}{p.pricingType === 'weight' && <span className="text-xs text-slate-400">/kg</span>}</TableCell>
                         <TableCell className={`text-right ${p.stock <= LOW_STOCK ? 'font-semibold text-red-600' : ''}`}>{p.stock} {p.unit}</TableCell>
                         <TableCell><Badge variant="outline">{p.category || '-'}</Badge></TableCell>
                         <TableCell className="text-right">
@@ -1082,11 +1114,11 @@ function CustomerManagement() {
                   <div className="min-w-0">
                     <p className="truncate text-sm font-semibold">{c.name}</p>
                     {c.phone && (
-                      <a href={`tel:${c.phone}`} className="mt-0.5 inline-flex items-center gap-1 text-xs text-gray-500">
+                      <a href={`tel:${c.phone}`} className="mt-0.5 inline-flex items-center gap-1 text-xs text-slate-500">
                         <Phone className="h-3 w-3" />{c.phone}
                       </a>
                     )}
-                    {c.address && <p className="truncate text-xs text-gray-400">{c.address}</p>}
+                    {c.address && <p className="truncate text-xs text-slate-400">{c.address}</p>}
                   </div>
                   <Badge variant={due > 0 ? 'destructive' : 'secondary'} className="shrink-0 text-[10px]">
                     {due > 0 ? `${formatCurrency(due)} due` : 'No due'}
@@ -1095,7 +1127,7 @@ function CustomerManagement() {
                 <div className="mt-2 flex gap-2">
                   <Button variant="outline" className="h-9 flex-1 text-xs" onClick={() => setDetailsId(c.id)}>Details</Button>
                   {due > 0 && (
-                    <Button className="h-9 bg-green-600 text-xs text-white hover:bg-green-700"
+                    <Button className="h-9 bg-emerald-600 text-xs text-white hover:bg-emerald-700"
                       onClick={() => { setPayId(c.id); setPayAmount(''); }}>Pay</Button>
                   )}
                   <Button variant="ghost" size="icon" className="h-9 w-9" aria-label={`Delete ${c.name}`} onClick={() => setDeleteId(c.id)}>
@@ -1112,18 +1144,15 @@ function CustomerManagement() {
       <Dialog open={addOpen} onOpenChange={o => { if (!o) setAddOpen(false); }}>
         <DialogContent className={`${SHEET} sm:max-w-md`}>
           <DialogHeader><DialogTitle>Add Customer</DialogTitle></DialogHeader>
-          <div className="space-y-3">
+          <form className="space-y-3" onSubmit={e => { e.preventDefault(); submitCustomer(); }}>
             <div className="space-y-1.5"><Label htmlFor="c-name">Name *</Label>
               <Input id="c-name" className="h-11" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
             <div className="space-y-1.5"><Label htmlFor="c-phone">Phone</Label>
               <Input id="c-phone" type="tel" inputMode="tel" className="h-11" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} /></div>
             <div className="space-y-1.5"><Label htmlFor="c-addr">Address</Label>
               <Input id="c-addr" className="h-11" value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} /></div>
-          </div>
-          <div className="flex gap-2 pt-1">
-            <Button variant="outline" className="h-11 flex-1" onClick={() => setAddOpen(false)}>Cancel</Button>
-            <Button className={`h-11 flex-1 ${PRIMARY_BTN}`} onClick={submitCustomer}>Add</Button>
-          </div>
+            <FormActions onCancel={() => setAddOpen(false)} label="Add" />
+          </form>
         </DialogContent>
       </Dialog>
 
@@ -1133,25 +1162,25 @@ function CustomerManagement() {
           <DialogHeader><DialogTitle>{detailsCustomer?.name}</DialogTitle></DialogHeader>
           {detailsCustomer && (
             <div className="space-y-3">
-              <div className="grid grid-cols-3 gap-2 rounded-lg bg-gray-50 p-3 text-xs">
-                <div><p className="text-gray-500">Phone</p><p className="truncate font-medium">{detailsCustomer.phone || '-'}</p></div>
-                <div><p className="text-gray-500">Address</p><p className="truncate font-medium">{detailsCustomer.address || '-'}</p></div>
-                <div><p className="text-gray-500">Due</p><p className="font-semibold text-red-600">{formatCurrency(Math.max(0, dues[detailsCustomer.id] ?? 0))}</p></div>
+              <div className="grid grid-cols-3 gap-2 rounded-lg bg-slate-50 p-3 text-xs">
+                <div><p className="text-slate-500">Phone</p><p className="truncate font-medium">{detailsCustomer.phone || '-'}</p></div>
+                <div><p className="text-slate-500">Address</p><p className="truncate font-medium">{detailsCustomer.address || '-'}</p></div>
+                <div><p className="text-slate-500">Due</p><p className="font-semibold text-red-600">{formatCurrency(Math.max(0, dues[detailsCustomer.id] ?? 0))}</p></div>
               </div>
-              <p className="text-xs font-medium text-gray-500">Purchase history</p>
+              <p className="text-xs font-medium text-slate-500">Purchase history</p>
               <ul className="max-h-64 divide-y overflow-y-auto rounded-lg border">
                 {sales.filter(s => s.customerId === detailsCustomer.id).sort(byNewest).map(s => (
                   <li key={s.id} className="flex items-center gap-2 px-3 py-2">
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-xs font-medium">{saleSummary(s)}</p>
-                      <p className="text-[11px] text-gray-500">{format(new Date(s.createdAt), 'MMM d, yyyy')}</p>
+                      <p className="text-[11px] text-slate-500">{format(new Date(s.createdAt), 'MMM d, yyyy')}</p>
                     </div>
                     <PaymentBadge type={s.paymentType} />
                     <span className="text-xs font-semibold">{formatCurrency(s.total)}</span>
                   </li>
                 ))}
                 {sales.every(s => s.customerId !== detailsCustomer.id) && (
-                  <li className="p-4 text-center text-xs text-gray-500">No purchases yet</li>
+                  <li className="p-4 text-center text-xs text-slate-500">No purchases yet</li>
                 )}
               </ul>
             </div>
@@ -1163,20 +1192,17 @@ function CustomerManagement() {
       <Dialog open={!!payId} onOpenChange={o => { if (!o) setPayId(null); }}>
         <DialogContent className={`${SHEET} sm:max-w-sm`}>
           <DialogHeader><DialogTitle>Receive Payment{payCustomer && ` · ${payCustomer.name}`}</DialogTitle></DialogHeader>
-          <div className="space-y-3">
+          <form className="space-y-3" onSubmit={e => { e.preventDefault(); submitPayment(); }}>
             <p className="text-sm">Current due: <span className="font-bold text-red-600">{formatCurrency(payDue)}</span></p>
             <div className="space-y-1.5">
               <Label htmlFor="pay-amt">Amount (৳)</Label>
               <div className="flex gap-2">
                 <Input id="pay-amt" inputMode="decimal" className="h-11" value={payAmount} onChange={e => setPayAmount(e.target.value)} />
-                <Button variant="outline" className="h-11 shrink-0" onClick={() => setPayAmount(String(payDue))}>Full</Button>
+                <Button type="button" variant="outline" className="h-11 shrink-0" onClick={() => setPayAmount(String(payDue))}>Full</Button>
               </div>
             </div>
-          </div>
-          <div className="flex gap-2 pt-1">
-            <Button variant="outline" className="h-11 flex-1" onClick={() => setPayId(null)}>Cancel</Button>
-            <Button className="h-11 flex-1 bg-green-600 text-white hover:bg-green-700" onClick={submitPayment}>Record</Button>
-          </div>
+            <FormActions onCancel={() => setPayId(null)} label="Record" submitClass="bg-emerald-600 text-white hover:bg-emerald-700" />
+          </form>
         </DialogContent>
       </Dialog>
 
@@ -1219,7 +1245,7 @@ function ExpenseFormDialog({ open, onClose }: { open: boolean; onClose: () => vo
     <Dialog open={open} onOpenChange={o => { if (!o) onClose(); }}>
       <DialogContent className={`${SHEET} sm:max-w-md`}>
         <DialogHeader><DialogTitle>Add Expense</DialogTitle></DialogHeader>
-        <div className="space-y-3">
+        <form className="space-y-3" onSubmit={e => { e.preventDefault(); submit(); }}>
           <div className="space-y-1.5"><Label htmlFor="e-desc">Description *</Label>
             <Input id="e-desc" className="h-11" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></div>
           <div className="space-y-1.5"><Label htmlFor="e-amt">Amount (৳) *</Label>
@@ -1229,18 +1255,15 @@ function ExpenseFormDialog({ open, onClose }: { open: boolean; onClose: () => vo
             <Input id="e-cat" className="h-11" value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} />
             <div className="flex flex-wrap gap-1.5 pt-1">
               {EXPENSE_CATEGORIES.map(c => (
-                <button key={c} onClick={() => setForm({ ...form, category: c })}
-                  className={`h-8 rounded-full border px-3 text-xs ${form.category === c ? 'border-purple-600 bg-purple-50 text-purple-700' : 'bg-white text-gray-600'}`}>
+                <button key={c} type="button" onClick={() => setForm({ ...form, category: c })}
+                  className={`h-8 rounded-full border px-3 text-xs ${form.category === c ? 'border-blue-700 bg-blue-50 text-blue-700' : 'bg-white text-slate-600'}`}>
                   {c}
                 </button>
               ))}
             </div>
           </div>
-        </div>
-        <div className="flex gap-2 pt-1">
-          <Button variant="outline" className="h-11 flex-1" onClick={onClose}>Cancel</Button>
-          <Button className={`h-11 flex-1 ${PRIMARY_BTN}`} onClick={submit}>Add</Button>
-        </div>
+          <FormActions onCancel={onClose} label="Add" />
+        </form>
       </DialogContent>
     </Dialog>
   );
@@ -1264,7 +1287,7 @@ function ExpenseTracking() {
       </div>
 
       <div className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-sm shadow-sm">
-        <span className="text-gray-500">{filtered.length} expenses</span>
+        <span className="text-slate-500">{filtered.length} expenses</span>
         <span className="font-semibold text-red-600">-{formatCurrency(total)}</span>
       </div>
 
@@ -1279,7 +1302,7 @@ function ExpenseTracking() {
                   <li key={e.id} className="flex items-center gap-2 px-3 py-2.5">
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium">{e.description}</p>
-                      <p className="text-[11px] text-gray-500">{format(new Date(e.createdAt), 'MMM d')} · {e.category || 'General'}</p>
+                      <p className="text-[11px] text-slate-500">{format(new Date(e.createdAt), 'MMM d')} · {e.category || 'General'}</p>
                     </div>
                     <span className="text-sm font-semibold text-red-600">-{formatCurrency(e.amount)}</span>
                     <Button variant="ghost" size="icon" className="h-10 w-10 shrink-0" aria-label={`Delete ${e.description}`} onClick={() => setDeleteId(e.id)}>
@@ -1291,7 +1314,7 @@ function ExpenseTracking() {
               <div className="hidden overflow-x-auto sm:block">
                 <Table>
                   <TableHeader>
-                    <TableRow className="bg-gray-50">
+                    <TableRow className="bg-slate-50">
                       <TableHead>Date</TableHead><TableHead>Description</TableHead><TableHead>Category</TableHead>
                       <TableHead className="text-right">Amount</TableHead><TableHead className="text-right">Action</TableHead>
                     </TableRow>
@@ -1399,10 +1422,10 @@ function Reports() {
 
   return (
     <div className="space-y-3 sm:space-y-6">
-      <div className="grid grid-cols-4 gap-1 rounded-lg bg-gray-100 p-1 sm:w-96">
+      <div className="grid grid-cols-4 gap-1 rounded-lg bg-slate-100 p-1 sm:w-96">
         {(['daily', 'weekly', 'monthly', 'yearly'] as const).map(p => (
           <button key={p} onClick={() => setPeriod(p)}
-            className={`h-8 rounded-md text-xs font-medium capitalize ${period === p ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-600'}`}>
+            className={`h-8 rounded-md text-xs font-medium capitalize ${period === p ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600'}`}>
             {p}
           </button>
         ))}
@@ -1424,10 +1447,10 @@ function Reports() {
                 <AreaChart data={chartData} margin={{ left: 0, right: 8, top: 4, bottom: 0 }}>
                   <defs>
                     <linearGradient id="gSales" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#7c3aed" stopOpacity={0.6} /><stop offset="95%" stopColor="#7c3aed" stopOpacity={0} />
+                      <stop offset="5%" stopColor="#1d4ed8" stopOpacity={0.6} /><stop offset="95%" stopColor="#1d4ed8" stopOpacity={0} />
                     </linearGradient>
                     <linearGradient id="gExp" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.6} /><stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
+                      <stop offset="5%" stopColor="#d97706" stopOpacity={0.6} /><stop offset="95%" stopColor="#d97706" stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
@@ -1435,8 +1458,8 @@ function Reports() {
                   <YAxis tick={{ fontSize: 10 }} width={42} />
                   <Tooltip formatter={fmtTip} />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
-                  <Area type="monotone" dataKey="sales" stroke="#7c3aed" fill="url(#gSales)" name="Sales" />
-                  <Area type="monotone" dataKey="expenses" stroke="#f59e0b" fill="url(#gExp)" name="Expenses" />
+                  <Area type="monotone" dataKey="sales" stroke="#1d4ed8" fill="url(#gSales)" name="Sales" />
+                  <Area type="monotone" dataKey="expenses" stroke="#d97706" fill="url(#gExp)" name="Expenses" />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -1492,7 +1515,7 @@ function Reports() {
                     <XAxis type="number" tick={{ fontSize: 10 }} />
                     <YAxis dataKey="name" type="category" tick={{ fontSize: 10 }} width={72} />
                     <Tooltip formatter={fmtTip} />
-                    <Bar dataKey="revenue" fill="#7c3aed" name="Revenue" radius={[0, 4, 4, 0]} />
+                    <Bar dataKey="revenue" fill="#1d4ed8" name="Revenue" radius={[0, 4, 4, 0]} />
                   </RechartsBar>
                 </ResponsiveContainer>
               </div>
