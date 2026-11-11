@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Noto_Sans_Bengali } from "next/font/google";
+import { Inter, Hind_Siliguri } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import { QueryProvider } from "@/components/providers/query-provider";
@@ -11,9 +11,10 @@ const inter = Inter({
 });
 
 // Bangla names and the ৳ sign
-const bengali = Noto_Sans_Bengali({
+const bengali = Hind_Siliguri({
   variable: "--font-bengali",
   subsets: ["bengali"],
+  weight: ["400", "500", "600", "700"],
   display: "swap",
 });
 
