@@ -26,8 +26,8 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "Store Manager - Convenience Store Management System",
-  description: "A comprehensive convenience store management system with offline support",
+  title: "স্টোর ম্যানেজার - দোকান ব্যবস্থাপনা",
+  description: "বিক্রি, পণ্য, কাস্টমার, বাকি ও খরচের হিসাব রাখার দোকান ম্যানেজমেন্ট সিস্টেম",
   keywords: ["store", "management", "POS", "inventory", "sales"],
   icons: {
     icon: "/logo.svg",
@@ -40,7 +40,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="bn" suppressHydrationWarning>
       <body
         className={`${inter.variable} ${bengali.variable} font-sans antialiased bg-background text-foreground`}
       >

@@ -8,6 +8,20 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Package } from 'lucide-react';
 
+// Supabase sends English error messages; show the common ones in Bangla
+function bnAuthError(msg: string) {
+  const m = msg.toLowerCase();
+  if (m.includes('invalid login')) return 'ইমেইল বা পাসওয়ার্ড ভুল হয়েছে';
+  if (m.includes('already registered')) return 'এই ইমেইলে আগেই অ্যাকাউন্ট খোলা আছে';
+  if (m.includes('not confirmed')) return 'ইমেইল এখনো কনফার্ম করা হয়নি';
+  if (m.includes('signups not allowed') || m.includes('signup is disabled')) return 'নতুন অ্যাকাউন্ট খোলা বন্ধ আছে';
+  if (m.includes('rate limit') || m.includes('too many')) return 'অনেকবার চেষ্টা করা হয়েছে, একটু পরে আবার করুন';
+  if (m.includes('valid email') || m.includes('invalid email')) return 'সঠিক ইমেইল দিন';
+  if (m.includes('password')) return 'পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে';
+  if (m.includes('fetch') || m.includes('network')) return 'ইন্টারনেট সংযোগ দেখুন';
+  return `সমস্যা হয়েছে: ${msg}`;
+}
+
 type Status = 'checking' | 'signed-out' | 'denied' | 'error' | 'ready';
 
 function Shell({ children }: { children: React.ReactNode }) {
@@ -18,7 +32,7 @@ function Shell({ children }: { children: React.ReactNode }) {
           <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-700 text-white">
             <Package className="h-5 w-5" />
           </span>
-          <h1 className="text-lg font-bold">Store Manager</h1>
+          <h1 className="text-lg font-bold">স্টোর ম্যানেজার</h1>
         </div>
         {children}
       </div>
@@ -37,7 +51,7 @@ function LoginForm() {
     e.preventDefault();
     setMsg(null);
     if (password.length < 6) {
-      setMsg({ type: 'error', text: 'Password must be at least 6 characters' });
+      setMsg({ type: 'error', text: 'পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে' });
       return;
     }
     setBusy(true);
@@ -46,21 +60,21 @@ function LoginForm() {
         ? await supabase.auth.signInWithPassword({ email: email.trim(), password })
         : await supabase.auth.signUp({ email: email.trim(), password });
     setBusy(false);
-    if (error) setMsg({ type: 'error', text: error.message });
+    if (error) setMsg({ type: 'error', text: bnAuthError(error.message) });
     else if (mode === 'up' && !data.session)
-      setMsg({ type: 'info', text: 'Account created. Check your email to confirm, then sign in.' });
+      setMsg({ type: 'info', text: 'অ্যাকাউন্ট তৈরি হয়েছে। ইমেইল কনফার্ম করে তারপর সাইন ইন করুন।' });
   };
 
   return (
     <Shell>
       <form onSubmit={submit} className="space-y-3">
         <div className="space-y-1.5">
-          <Label htmlFor="email">Email</Label>
+          <Label htmlFor="email">ইমেইল</Label>
           <Input id="email" type="email" autoComplete="email" required className="h-11"
             value={email} onChange={e => setEmail(e.target.value)} />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="password">Password</Label>
+          <Label htmlFor="password">পাসওয়ার্ড</Label>
           <Input id="password" type="password" required className="h-11"
             autoComplete={mode === 'in' ? 'current-password' : 'new-password'}
             value={password} onChange={e => setPassword(e.target.value)} />
@@ -69,11 +83,11 @@ function LoginForm() {
           <p className={`text-sm ${msg.type === 'error' ? 'text-red-600' : 'text-emerald-700'}`}>{msg.text}</p>
         )}
         <Button type="submit" disabled={busy} className="h-11 w-full bg-blue-700 text-white hover:bg-blue-800">
-          {busy ? 'Please wait…' : mode === 'in' ? 'Sign in' : 'Create account'}
+          {busy ? 'অপেক্ষা করুন…' : mode === 'in' ? 'সাইন ইন' : 'অ্যাকাউন্ট খুলুন'}
         </Button>
         <button type="button" className="w-full text-center text-sm text-blue-700"
           onClick={() => { setMode(mode === 'in' ? 'up' : 'in'); setMsg(null); }}>
-          {mode === 'in' ? 'First time? Create account' : 'Already have an account? Sign in'}
+          {mode === 'in' ? 'প্রথমবার? অ্যাকাউন্ট খুলুন' : 'অ্যাকাউন্ট আছে? সাইন ইন করুন'}
         </button>
       </form>
     </Shell>
@@ -124,7 +138,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     return (
       <div className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-slate-50">
         <div className="h-9 w-9 animate-spin rounded-full border-4 border-blue-200 border-t-blue-700" />
-        <p className="text-sm text-slate-500">Loading Store Manager…</p>
+        <p className="text-sm text-slate-500">স্টোর ম্যানেজার লোড হচ্ছে…</p>
       </div>
     );
 
@@ -135,17 +149,17 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       <Shell>
         <p className="text-sm text-slate-700">
           {status === 'denied'
-            ? 'This account does not have access to this store. Ask the owner to give you access, or sign in with the owner account.'
-            : `Could not connect: ${errorText}`}
+            ? 'এই অ্যাকাউন্টের এই দোকানে প্রবেশের অনুমতি নেই। মালিকের কাছ থেকে অনুমতি নিন, অথবা মালিকের অ্যাকাউন্টে সাইন ইন করুন।'
+            : `সংযোগ করা যায়নি: ${errorText}`}
         </p>
         <div className="mt-4 flex gap-2">
           {status === 'error' && (
             <Button className="h-11 flex-1 bg-blue-700 text-white hover:bg-blue-800"
               onClick={() => { currentUser.current = null; supabase.auth.getSession().then(({ data }) => enter(data.session?.user.id ?? null)); }}>
-              Retry
+              আবার চেষ্টা করুন
             </Button>
           )}
-          <Button variant="outline" className="h-11 flex-1" onClick={() => supabase.auth.signOut()}>Sign out</Button>
+          <Button variant="outline" className="h-11 flex-1" onClick={() => supabase.auth.signOut()}>সাইন আউট</Button>
         </div>
       </Shell>
     );

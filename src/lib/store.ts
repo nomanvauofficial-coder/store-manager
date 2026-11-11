@@ -105,8 +105,8 @@ export const useStore = create<StoreState>((set, get) => {
       if (error) throw error;
     } catch (e) {
       toast({
-        title: 'Could not save',
-        description: (e as { message?: string })?.message || 'Check your internet connection',
+        title: 'সেভ করা যায়নি',
+        description: (e as { message?: string })?.message || 'ইন্টারনেট সংযোগ দেখুন',
         variant: 'destructive',
       });
       void get().refresh(keys);
@@ -123,7 +123,7 @@ export const useStore = create<StoreState>((set, get) => {
         );
         set(Object.fromEntries(results) as Partial<StoreState>);
       } catch (e) {
-        toast({ title: 'Could not load data', description: (e as { message?: string })?.message, variant: 'destructive' });
+        toast({ title: 'ডেটা লোড করা যায়নি', description: (e as { message?: string })?.message, variant: 'destructive' });
       }
     },
 

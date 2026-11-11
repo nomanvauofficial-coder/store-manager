@@ -6,9 +6,10 @@ import { supabase } from '@/lib/supabase';
 import { AuthGate } from '@/components/auth-gate';
 import { Product, Sale, SaleItem } from '@/lib/types';
 import {
-  format, startOfDay, startOfWeek, startOfMonth, endOfDay, endOfWeek, endOfMonth,
+  format as dfFormat, startOfDay, startOfWeek, startOfMonth, endOfDay, endOfWeek, endOfMonth,
   subDays, subMonths, isWithinInterval,
 } from 'date-fns';
+import { bn } from 'date-fns/locale/bn';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -38,8 +39,17 @@ import {
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
 
+const PERIOD_BN = { daily: 'দৈনিক', weekly: 'সাপ্তাহিক', monthly: 'মাসিক', yearly: 'বার্ষিক' } as const;
 const COLORS = ['#1d4ed8', '#0d9488', '#d97706', '#dc2626', '#64748b', '#0891b2'];
 const LOW_STOCK = 5;
+
+// Dates: Bangla month/day names, but normal 0-9 digits (same as the numbers everywhere else)
+const fmt = (d: Date | number, pattern: string) =>
+  dfFormat(d, pattern, { locale: bn }).replace(/[০-৯]/g, c => String('০১২৩৪৫৬৭৮৯'.indexOf(c)));
+
+const DEFAULT_CATEGORY = 'সাধারণ';
+const catOf = (c?: string | null) => (!c || c === 'General' ? DEFAULT_CATEGORY : c);
+const unitBn = (u?: string) => (u === 'kg' ? 'কেজি' : u === 'pcs' ? 'পিস' : u ?? '');
 
 // Bangladeshi Taka, with thousand separators, no useless ".00"
 const formatCurrency = (amount: number) =>
@@ -57,10 +67,10 @@ const PRIMARY_BTN = 'bg-blue-700 text-white hover:bg-blue-800';
 
 type Range = 'all' | 'today' | 'week' | 'month';
 const RANGES: { id: Range; label: string }[] = [
-  { id: 'all', label: 'All' },
-  { id: 'today', label: 'Today' },
-  { id: 'week', label: 'Week' },
-  { id: 'month', label: 'Month' },
+  { id: 'all', label: 'সব' },
+  { id: 'today', label: 'আজ' },
+  { id: 'week', label: 'সপ্তাহ' },
+  { id: 'month', label: 'মাস' },
 ];
 
 function inRange(iso: string, range: Range) {
@@ -78,18 +88,18 @@ const byNewest = <T extends { createdAt: string }>(a: T, b: T) =>
   new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
 
 const getCategories = (products: Product[]) =>
-  Array.from(new Set(products.map(p => p.category || 'General'))).sort((a, b) => a.localeCompare(b));
+  Array.from(new Set(products.map(p => catOf(p.category)))).sort((a, b) => a.localeCompare(b));
 
 // Reuse an existing category if the same name is typed again (any letter case)
 const normalizeCategory = (value: string, existing: string[]) => {
   const v = value.trim();
-  if (!v) return 'General';
+  if (!v) return DEFAULT_CATEGORY;
   return existing.find(c => c.toLowerCase() === v.toLowerCase()) ?? v;
 };
 
 const saleSummary = (sale: Sale) =>
   sale.items
-    .map(i => `${i.productName} ${i.pricingType === 'weight' ? `${i.weight ?? i.quantity}kg` : `×${i.quantity}`}`)
+    .map(i => `${i.productName} ${i.pricingType === 'weight' ? `${i.weight ?? i.quantity} কেজি` : `×${i.quantity}`}`)
     .join(', ');
 
 // Customer dues, calculated once
@@ -141,7 +151,7 @@ function useVisualViewport() {
 function FormActions({ onCancel, label, submitClass = PRIMARY_BTN }: { onCancel: () => void; label: string; submitClass?: string }) {
   return (
     <div className="sticky bottom-0 -mx-4 flex gap-2 border-t bg-white px-4 pb-0.5 pt-3 sm:mx-0 sm:border-0 sm:px-0 sm:pt-1">
-      <Button type="button" variant="outline" className="h-11 flex-1" onClick={onCancel}>Cancel</Button>
+      <Button type="button" variant="outline" className="h-11 flex-1" onClick={onCancel}>বাতিল</Button>
       <Button type="submit" className={`h-11 flex-1 ${submitClass}`}>{label}</Button>
     </div>
   );
@@ -180,7 +190,7 @@ function RangeTabs({ value, onChange }: { value: Range; onChange: (r: Range) => 
 function PaymentBadge({ type }: { type: 'cash' | 'due' }) {
   return (
     <Badge variant={type === 'cash' ? 'default' : 'secondary'} className="text-[10px] px-1.5 py-0 capitalize">
-      {type}
+      {type === 'cash' ? 'নগদ' : 'বাকি'}
     </Badge>
   );
 }
@@ -196,8 +206,8 @@ function ConfirmDialog({
           {description && <AlertDialogDescription>{description}</AlertDialogDescription>}
         </AlertDialogHeader>
         <AlertDialogFooter className="max-sm:flex-row max-sm:gap-2">
-          <AlertDialogCancel className="max-sm:flex-1 max-sm:mt-0">Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm} className="bg-red-500 hover:bg-red-600 max-sm:flex-1">Delete</AlertDialogAction>
+          <AlertDialogCancel className="max-sm:flex-1 max-sm:mt-0">বাতিল</AlertDialogCancel>
+          <AlertDialogAction onClick={onConfirm} className="bg-red-500 hover:bg-red-600 max-sm:flex-1">মুছুন</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
@@ -221,7 +231,7 @@ function SearchBar({ value, onChange, placeholder }: { value: string; onChange: 
 }
 
 function CategoryChips({
-  categories, value, onChange, counts, allLabel = 'All', className = '',
+  categories, value, onChange, counts, allLabel = 'সব', className = '',
 }: {
   categories: string[]; value: string; onChange: (c: string) => void;
   counts?: Record<string, number>; allLabel?: string; className?: string;
@@ -232,7 +242,7 @@ function CategoryChips({
     }`;
   const total = counts ? Object.values(counts).reduce((a, b) => a + b, 0) : undefined;
   return (
-    <div className={`flex gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none] ${className}`} role="tablist" aria-label="Categories">
+    <div className={`flex gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none] ${className}`} role="tablist" aria-label="ক্যাটাগরি">
       <button role="tab" aria-selected={value === ''} className={chip(value === '')} onClick={() => onChange('')}>
         {allLabel}{total !== undefined && ` · ${total}`}
       </button>
@@ -279,12 +289,12 @@ function StatCard({
 /* ------------------------------------------------------------------ */
 
 const NAV: { id: string; label: string; icon: LucideIcon }[] = [
-  { id: 'dashboard', label: 'Home', icon: HomeIcon },
-  { id: 'sales', label: 'Sales', icon: ShoppingCart },
-  { id: 'products', label: 'Products', icon: Package },
-  { id: 'customers', label: 'Customers', icon: Users },
-  { id: 'expenses', label: 'Expenses', icon: Wallet },
-  { id: 'reports', label: 'Reports', icon: BarChart3 },
+  { id: 'dashboard', label: 'হোম', icon: HomeIcon },
+  { id: 'sales', label: 'বিক্রি', icon: ShoppingCart },
+  { id: 'products', label: 'পণ্য', icon: Package },
+  { id: 'customers', label: 'কাস্টমার', icon: Users },
+  { id: 'expenses', label: 'খরচ', icon: Wallet },
+  { id: 'reports', label: 'রিপোর্ট', icon: BarChart3 },
 ];
 
 export default function Page() {
@@ -313,11 +323,11 @@ function Home() {
             <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-700 text-white">
               <Package className="h-4 w-4" />
             </span>
-            Store Manager
+            স্টোর ম্যানেজার
           </h1>
           <div className="flex items-center gap-1">
-            <span className="text-xs text-slate-500 sm:text-sm">{format(new Date(), 'EEE, MMM d')}</span>
-            <Button variant="ghost" size="icon" className="h-9 w-9" aria-label="Sign out"
+            <span className="text-xs text-slate-500 sm:text-sm">{fmt(new Date(), 'EEE, MMM d')}</span>
+            <Button variant="ghost" size="icon" className="h-9 w-9" aria-label="সাইন আউট"
               onClick={() => supabase.auth.signOut()}>
               <LogOut className="h-4 w-4 text-slate-500" />
             </Button>
@@ -345,7 +355,7 @@ function Home() {
 
       {/* Mobile bottom navigation */}
       <nav
-        aria-label="Main"
+        aria-label="মেনু"
         className="fixed inset-x-0 bottom-0 z-40 border-t bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur sm:hidden"
       >
         <div className="grid grid-cols-6">
@@ -365,7 +375,7 @@ function Home() {
                 <Icon className="h-5 w-5" />
                 {n.label}
                 {n.id === 'products' && lowStockCount > 0 && (
-                  <span className="absolute right-3 top-2 h-2 w-2 rounded-full bg-red-500" aria-label="Low stock" />
+                  <span className="absolute right-3 top-2 h-2 w-2 rounded-full bg-red-500" aria-label="কম স্টক" />
                 )}
               </button>
             );
@@ -401,25 +411,25 @@ function Dashboard({ go }: { go: (tab: string) => void }) {
   return (
     <div className="space-y-3 sm:space-y-6">
       <div className="grid grid-cols-2 gap-2 sm:gap-4 lg:grid-cols-4">
-        <StatCard label="Today's Sales" value={formatCurrency(todayRevenue)} sub={`${todaySales.length} transactions`}
+        <StatCard label="আজকের বিক্রি" value={formatCurrency(todayRevenue)} sub={`${todaySales.length}টি লেনদেন`}
           icon={Banknote} tone="green" onClick={() => go('sales')} />
-        <StatCard label="Total Due" value={formatCurrency(totalDue)} sub="Outstanding"
+        <StatCard label="মোট বাকি" value={formatCurrency(totalDue)} sub="অনাদায়ী"
           icon={CreditCard} tone="orange" onClick={() => go('customers')} />
-        <StatCard label="Low Stock" value={String(lowStockProducts.length)} sub="Need restock"
+        <StatCard label="কম স্টক" value={String(lowStockProducts.length)} sub="মাল তুলতে হবে"
           icon={AlertCircle} tone={lowStockProducts.length > 0 ? 'red' : 'gray'} onClick={() => go('products')} />
-        <StatCard label="Monthly Profit" value={formatCurrency(profit)} sub={`Revenue ${formatCurrency(monthlyRevenue)}`}
+        <StatCard label="এই মাসের লাভ" value={formatCurrency(profit)} sub={`বিক্রি ${formatCurrency(monthlyRevenue)}`}
           icon={TrendingUp} tone={profit >= 0 ? 'blue' : 'red'} onClick={() => go('reports')} />
       </div>
 
       <div className="grid grid-cols-3 gap-2 sm:gap-4">
         <Button onClick={() => setSaleOpen(true)} className={`h-11 sm:h-14 sm:text-base ${PRIMARY_BTN}`}>
-          <ShoppingCart /> New Sale
+          <ShoppingCart /> নতুন বিক্রি
         </Button>
         <Button variant="outline" onClick={() => setProductOpen(true)} className="h-11 sm:h-14 sm:text-base">
-          <Package /> Product
+          <Package /> পণ্য
         </Button>
         <Button variant="outline" onClick={() => setExpenseOpen(true)} className="h-11 sm:h-14 sm:text-base">
-          <Receipt /> Expense
+          <Receipt /> খরচ
         </Button>
       </div>
 
@@ -430,10 +440,10 @@ function Dashboard({ go }: { go: (tab: string) => void }) {
         >
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
           <div className="min-w-0 text-xs">
-            <p className="font-semibold text-red-700">Restock soon</p>
+            <p className="font-semibold text-red-700">শীঘ্রই মাল তুলুন</p>
             <p className="truncate text-red-600">
               {lowStockProducts.slice(0, 4).map(p => `${p.name} (${p.stock})`).join(', ')}
-              {lowStockProducts.length > 4 && ` +${lowStockProducts.length - 4} more`}
+              {lowStockProducts.length > 4 && ` +${lowStockProducts.length - 4} আরও`}
             </p>
           </div>
         </button>
@@ -441,16 +451,16 @@ function Dashboard({ go }: { go: (tab: string) => void }) {
 
       <Card className="gap-0 py-0 shadow-sm">
         <CardHeader className="flex flex-row items-center justify-between px-3 py-3 sm:px-6">
-          <CardTitle className="text-sm sm:text-lg">Recent Sales</CardTitle>
+          <CardTitle className="text-sm sm:text-lg">সাম্প্রতিক বিক্রি</CardTitle>
           {sales.length > 5 && (
             <Button variant="ghost" size="sm" className="h-8 text-xs text-blue-700" onClick={() => go('sales')}>
-              View all
+              সব দেখুন
             </Button>
           )}
         </CardHeader>
         <CardContent className="p-0">
           <SalesList sales={recentSales} emptyAction={
-            <Button size="sm" className={PRIMARY_BTN} onClick={() => setSaleOpen(true)}>Make first sale</Button>
+            <Button size="sm" className={PRIMARY_BTN} onClick={() => setSaleOpen(true)}>প্রথম বিক্রি করুন</Button>
           } />
         </CardContent>
       </Card>
@@ -470,7 +480,7 @@ function Dashboard({ go }: { go: (tab: string) => void }) {
 function SalesList({
   sales, onDelete, emptyAction,
 }: { sales: Sale[]; onDelete?: (id: string) => void; emptyAction?: React.ReactNode }) {
-  if (sales.length === 0) return <EmptyState icon={Receipt} text="No sales yet" action={emptyAction} />;
+  if (sales.length === 0) return <EmptyState icon={Receipt} text="এখনো কোনো বিক্রি নেই" action={emptyAction} />;
   return (
     <>
       <ul className="divide-y sm:hidden">
@@ -479,14 +489,14 @@ function SalesList({
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium">{saleSummary(sale)}</p>
               <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500">
-                {format(new Date(sale.createdAt), 'MMM d, h:mm a')}
+                {fmt(new Date(sale.createdAt), 'MMM d, h:mm a')}
                 <PaymentBadge type={sale.paymentType} />
                 {sale.customerName && <span className="truncate">· {sale.customerName}</span>}
               </p>
             </div>
             <span className="text-sm font-semibold text-emerald-600">{formatCurrency(sale.total)}</span>
             {onDelete && (
-              <Button variant="ghost" size="icon" className="h-10 w-10 shrink-0" aria-label="Delete sale" onClick={() => onDelete(sale.id)}>
+              <Button variant="ghost" size="icon" className="h-10 w-10 shrink-0" aria-label="বিক্রি মুছুন" onClick={() => onDelete(sale.id)}>
                 <Trash2 className="h-4 w-4 text-red-500" />
               </Button>
             )}
@@ -498,25 +508,25 @@ function SalesList({
         <Table>
           <TableHeader>
             <TableRow className="bg-slate-50">
-              <TableHead>Date</TableHead>
-              <TableHead>Items</TableHead>
-              <TableHead>Payment</TableHead>
-              <TableHead>Customer</TableHead>
-              <TableHead className="text-right">Total</TableHead>
-              {onDelete && <TableHead className="text-right">Action</TableHead>}
+              <TableHead>তারিখ</TableHead>
+              <TableHead>পণ্য</TableHead>
+              <TableHead>পেমেন্ট</TableHead>
+              <TableHead>কাস্টমার</TableHead>
+              <TableHead className="text-right">মোট</TableHead>
+              {onDelete && <TableHead className="text-right">কাজ</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
             {sales.map(sale => (
               <TableRow key={sale.id}>
-                <TableCell className="text-xs">{format(new Date(sale.createdAt), 'MMM d, h:mm a')}</TableCell>
+                <TableCell className="text-xs">{fmt(new Date(sale.createdAt), 'MMM d, h:mm a')}</TableCell>
                 <TableCell className="max-w-xs truncate text-xs">{saleSummary(sale)}</TableCell>
                 <TableCell><PaymentBadge type={sale.paymentType} /></TableCell>
                 <TableCell className="text-xs">{sale.customerName || '-'}</TableCell>
                 <TableCell className="text-right text-xs font-medium text-emerald-600">{formatCurrency(sale.total)}</TableCell>
                 {onDelete && (
                   <TableCell className="text-right">
-                    <Button variant="ghost" size="icon" aria-label="Delete sale" onClick={() => onDelete(sale.id)}>
+                    <Button variant="ghost" size="icon" aria-label="বিক্রি মুছুন" onClick={() => onDelete(sale.id)}>
                       <Trash2 className="h-4 w-4 text-red-500" />
                     </Button>
                   </TableCell>
@@ -545,12 +555,12 @@ function SalesModule() {
       <div className="flex items-center gap-2">
         <RangeTabs value={range} onChange={setRange} />
         <Button onClick={() => setOpen(true)} className={`ml-auto h-10 shrink-0 ${PRIMARY_BTN}`}>
-          <Plus /> New Sale
+          <Plus /> নতুন বিক্রি
         </Button>
       </div>
 
       <div className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-sm shadow-sm">
-        <span className="text-slate-500">{filtered.length} sales</span>
+        <span className="text-slate-500">{filtered.length}টি বিক্রি</span>
         <span className="font-semibold text-emerald-700">{formatCurrency(total)}</span>
       </div>
 
@@ -563,11 +573,11 @@ function SalesModule() {
       <NewSaleDialog open={open} onClose={() => setOpen(false)} />
       <ConfirmDialog
         open={!!deleteId}
-        title="Delete sale?"
-        description="Inventory will be restored."
+        title="বিক্রি মুছবেন?"
+        description="স্টক আগের অবস্থায় ফিরে যাবে।"
         onCancel={() => setDeleteId(null)}
         onConfirm={() => {
-          if (deleteId) { deleteSale(deleteId); toast({ title: 'Deleted', description: 'Sale deleted' }); }
+          if (deleteId) { deleteSale(deleteId); toast({ title: 'মুছে ফেলা হয়েছে', description: 'বিক্রি মুছে ফেলা হয়েছে' }); }
           setDeleteId(null);
         }}
       />
@@ -607,7 +617,7 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
     const q = search.trim().toLowerCase();
     return products
       .filter(p => p.stock > 0
-        && (!saleCat || (p.category || 'General') === saleCat)
+        && (!saleCat || catOf(p.category) === saleCat)
         && (!q || `${p.name} ${p.category ?? ''}`.toLowerCase().includes(q)))
       .slice(0, 30);
   }, [products, search, saleCat]);
@@ -617,11 +627,11 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
   const addItem = () => {
     if (!selected) return;
     if (!(amount > 0) || amount > available) {
-      toast({ title: 'Invalid amount', description: `Available: ${available} ${selected.unit}`, variant: 'destructive' });
+      toast({ title: 'ভুল পরিমাণ', description: `আছে: ${available} ${unitBn(selected.unit)}`, variant: 'destructive' });
       return;
     }
     if (!isWeight && !Number.isInteger(amount)) {
-      toast({ title: 'Invalid quantity', description: 'Use a whole number', variant: 'destructive' });
+      toast({ title: 'ভুল সংখ্যা', description: 'পূর্ণ সংখ্যা দিন', variant: 'destructive' });
       return;
     }
     const newQty = Math.round((inCart + amount) * 1000) / 1000;
@@ -644,7 +654,7 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
   const handleSubmit = () => {
     if (items.length === 0) return;
     if (paymentType === 'due' && !customerId) {
-      toast({ title: 'Select a customer', description: 'A customer is required for due payment', variant: 'destructive' });
+      toast({ title: 'কাস্টমার বাছুন', description: 'বাকিতে বিক্রির জন্য কাস্টমার দিতে হবে', variant: 'destructive' });
       return;
     }
     const customer = customers.find(c => c.id === customerId);
@@ -653,26 +663,26 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
       customerId: paymentType === 'due' ? customerId : undefined,
       customerName: paymentType === 'due' ? customer?.name : undefined,
     });
-    toast({ title: 'Sale completed', description: formatCurrency(total) });
+    toast({ title: 'বিক্রি সম্পন্ন', description: formatCurrency(total) });
     onClose();
   };
 
   return (
     <Dialog open={open} onOpenChange={o => { if (!o) onClose(); }}>
       <DialogContent className={`${SHEET} sm:max-w-xl`}>
-        <DialogHeader><DialogTitle>New Sale</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>নতুন বিক্রি</DialogTitle></DialogHeader>
 
         <div className="space-y-3">
           {/* Product picker */}
           {!selected ? (
             <div className="space-y-2">
-              <SearchBar value={search} onChange={setSearch} placeholder="Search product…" />
+              <SearchBar value={search} onChange={setSearch} placeholder="পণ্য খুঁজুন…" />
               {saleCategories.length > 1 && (
                 <CategoryChips categories={saleCategories} value={saleCat} onChange={setSaleCat} />
               )}
               <div className="max-h-44 divide-y overflow-y-auto rounded-lg border">
                 {matches.length === 0 ? (
-                  <p className="p-4 text-center text-sm text-slate-500">No product in stock</p>
+                  <p className="p-4 text-center text-sm text-slate-500">স্টকে কোনো পণ্য নেই</p>
                 ) : matches.map(p => (
                   <button
                     key={p.id}
@@ -681,8 +691,8 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
                   >
                     {p.pricingType === 'weight' && <Scale className="h-3.5 w-3.5 shrink-0 text-blue-600" />}
                     <span className="min-w-0 flex-1 truncate text-sm font-medium">{p.name}</span>
-                    <span className="text-xs text-slate-500">{p.stock} {p.unit}</span>
-                    <span className="text-sm font-semibold">{formatCurrency(p.price)}{p.pricingType === 'weight' && '/kg'}</span>
+                    <span className="text-xs text-slate-500">{p.stock} {unitBn(p.unit)}</span>
+                    <span className="text-sm font-semibold">{formatCurrency(p.price)}{p.pricingType === 'weight' && '/কেজি'}</span>
                   </button>
                 ))}
               </div>
@@ -693,10 +703,10 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold">{selected.name}</p>
                   <p className="text-xs text-slate-600">
-                    {formatCurrency(selected.price)}/{isWeight ? 'kg' : 'pcs'} · Available {available} {selected.unit}
+                    {formatCurrency(selected.price)}/{isWeight ? 'কেজি' : 'পিস'} · আছে {available} {unitBn(selected.unit)}
                   </p>
                 </div>
-                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label="Change product" onClick={() => setSelectedId('')}>
+                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label="পণ্য বদলান" onClick={() => setSelectedId('')}>
                   <X className="h-4 w-4" />
                 </Button>
               </div>
@@ -705,16 +715,16 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
                 <div className="space-y-2">
                   <div className="flex gap-2">
                     <Input
-                      inputMode="decimal" placeholder="Weight (kg)" aria-label="Weight in kg"
+                      inputMode="decimal" placeholder="ওজন (কেজি)" aria-label="ওজন কেজিতে"
                       value={weight} onChange={e => setWeight(e.target.value)} className="h-11 flex-1"
                     />
-                    <Button onClick={addItem} disabled={!(amount > 0)} className={`h-11 px-5 ${PRIMARY_BTN}`}>Add</Button>
+                    <Button onClick={addItem} disabled={!(amount > 0)} className={`h-11 px-5 ${PRIMARY_BTN}`}>যোগ</Button>
                   </div>
                   <div className="flex gap-1.5">
                     {['0.25', '0.5', '1', '2'].map(w => (
                       <button key={w} onClick={() => setWeight(w)}
                         className="h-8 flex-1 rounded-md border bg-white text-xs font-medium active:bg-slate-100">
-                        {w} kg
+                        {w} কেজি
                       </button>
                     ))}
                   </div>
@@ -722,22 +732,22 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
               ) : (
                 <div className="flex items-center gap-2">
                   <div className="flex items-center rounded-md border bg-white">
-                    <Button variant="ghost" size="icon" className="h-11 w-11" aria-label="Decrease"
+                    <Button variant="ghost" size="icon" className="h-11 w-11" aria-label="কমান"
                       onClick={() => setQty(String(Math.max(1, (parseInt(qty) || 1) - 1)))}>
                       <Minus className="h-4 w-4" />
                     </Button>
                     <Input
-                      inputMode="numeric" aria-label="Quantity" value={qty}
+                      inputMode="numeric" aria-label="পরিমাণ" value={qty}
                       onChange={e => setQty(e.target.value.replace(/\D/g, ''))}
                       className="h-11 w-14 border-0 text-center shadow-none focus-visible:ring-0"
                     />
-                    <Button variant="ghost" size="icon" className="h-11 w-11" aria-label="Increase"
+                    <Button variant="ghost" size="icon" className="h-11 w-11" aria-label="বাড়ান"
                       onClick={() => setQty(String((parseInt(qty) || 0) + 1))}>
                       <Plus className="h-4 w-4" />
                     </Button>
                   </div>
                   <Button onClick={addItem} disabled={!(amount > 0)} className={`h-11 flex-1 ${PRIMARY_BTN}`}>
-                    Add · {formatCurrency((amount > 0 ? amount : 0) * selected.price)}
+                    যোগ · {formatCurrency((amount > 0 ? amount : 0) * selected.price)}
                   </Button>
                 </div>
               )}
@@ -755,11 +765,11 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">{item.productName}</p>
                     <p className="text-xs text-slate-500">
-                      {item.pricingType === 'weight' ? `${item.weight} kg` : `${item.quantity} pcs`} × {formatCurrency(item.price)}
+                      {item.pricingType === 'weight' ? `${item.weight} কেজি` : `${item.quantity} পিস`} × {formatCurrency(item.price)}
                     </p>
                   </div>
                   <span className="text-sm font-semibold">{formatCurrency(item.subtotal)}</span>
-                  <Button variant="ghost" size="icon" className="h-9 w-9" aria-label={`Remove ${item.productName}`}
+                  <Button variant="ghost" size="icon" className="h-9 w-9" aria-label={`সরান ${item.productName}`}
                     onClick={() => setItems(items.filter(i => i.productId !== item.productId))}>
                     <X className="h-4 w-4" />
                   </Button>
@@ -771,18 +781,18 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
           {/* Payment */}
           <div className="grid grid-cols-2 gap-2">
             <Button variant={paymentType === 'cash' ? 'default' : 'outline'} className="h-11" onClick={() => setPaymentType('cash')}>
-              <Wallet /> Cash
+              <Wallet /> নগদ
             </Button>
             <Button variant={paymentType === 'due' ? 'default' : 'outline'} className="h-11" onClick={() => setPaymentType('due')}>
-              <CreditCard /> Due
+              <CreditCard /> বাকি
             </Button>
           </div>
 
           {paymentType === 'due' && (
             <Select value={customerId} onValueChange={setCustomerId}>
-              <SelectTrigger className="h-11 w-full" aria-label="Customer"><SelectValue placeholder="Select customer" /></SelectTrigger>
+              <SelectTrigger className="h-11 w-full" aria-label="কাস্টমার"><SelectValue placeholder="কাস্টমার বাছুন" /></SelectTrigger>
               <SelectContent>
-                {customers.length === 0 && <div className="p-3 text-sm text-slate-500">Add a customer first</div>}
+                {customers.length === 0 && <div className="p-3 text-sm text-slate-500">আগে একটি কাস্টমার যোগ করুন</div>}
                 {customers.map(c => (
                   <SelectItem key={c.id} value={c.id}>{c.name}{c.phone && ` · ${c.phone}`}</SelectItem>
                 ))}
@@ -794,11 +804,11 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
         {/* Sticky total + action */}
         <div className="sticky bottom-0 -mx-4 flex items-center gap-3 border-t bg-white px-4 pt-3 sm:mx-0 sm:px-0">
           <div className="leading-tight">
-            <p className="text-[11px] text-slate-500">Total</p>
+            <p className="text-[11px] text-slate-500">মোট</p>
             <p className="text-xl font-bold text-emerald-700">{formatCurrency(total)}</p>
           </div>
           <Button onClick={handleSubmit} disabled={items.length === 0} className="h-11 flex-1 bg-emerald-600 text-white hover:bg-emerald-700">
-            Complete Sale
+            বিক্রি সম্পন্ন করুন
           </Button>
         </div>
       </DialogContent>
@@ -836,7 +846,7 @@ function ProductFormDialog({
     const price = Number(form.price);
     const stock = Number(form.stock);
     if (!form.name.trim() || form.price === '' || form.stock === '' || !(price >= 0) || !(stock >= 0)) {
-      toast({ title: 'Check the form', description: 'Name, price and stock are required', variant: 'destructive' });
+      toast({ title: 'ফর্মটি দেখুন', description: 'নাম, দাম ও স্টক দিতে হবে', variant: 'destructive' });
       return;
     }
     const data = {
@@ -847,10 +857,10 @@ function ProductFormDialog({
     };
     if (product) {
       updateProduct(product.id, data);
-      toast({ title: 'Product updated' });
+      toast({ title: 'পণ্য আপডেট হয়েছে' });
     } else {
       addProduct(data);
-      toast({ title: 'Product added' });
+      toast({ title: 'পণ্য যোগ হয়েছে' });
     }
     onClose();
   };
@@ -860,10 +870,10 @@ function ProductFormDialog({
   return (
     <Dialog open={open} onOpenChange={o => { if (!o) onClose(); }}>
       <DialogContent className={`${SHEET} sm:max-w-md`}>
-        <DialogHeader><DialogTitle>{product ? 'Edit Product' : 'Add Product'}</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>{product ? 'পণ্য সম্পাদনা' : 'নতুন পণ্য'}</DialogTitle></DialogHeader>
         <form className="space-y-3" onSubmit={e => { e.preventDefault(); submit(); }}>
           <div className="space-y-1.5">
-            <Label htmlFor="p-name">Name *</Label>
+            <Label htmlFor="p-name">নাম *</Label>
             <Input id="p-name" className="h-11" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
           </div>
 
@@ -871,26 +881,26 @@ function ProductFormDialog({
             {(['fixed', 'weight'] as const).map(t => (
               <button key={t} type="button" onClick={() => setForm({ ...form, pricingType: t })}
                 className={`h-9 rounded-md text-sm font-medium ${form.pricingType === t ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600'}`}>
-                {t === 'fixed' ? 'Per piece' : 'Per kg'}
+                {t === 'fixed' ? 'পিস হিসেবে' : 'কেজি হিসেবে'}
               </button>
             ))}
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor="p-price">Price {isWeight ? '(per kg)' : ''} *</Label>
+              <Label htmlFor="p-price">দাম {isWeight ? '(প্রতি কেজি)' : ''} *</Label>
               <Input id="p-price" inputMode="decimal" className="h-11" value={form.price}
                 onChange={e => setForm({ ...form, price: e.target.value })} />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="p-stock">Stock {isWeight ? '(kg)' : '(pcs)'} *</Label>
+              <Label htmlFor="p-stock">স্টক {isWeight ? '(কেজি)' : '(পিস)'} *</Label>
               <Input id="p-stock" inputMode="decimal" className="h-11" value={form.stock}
                 onChange={e => setForm({ ...form, stock: e.target.value })} />
             </div>
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="p-cat">Category</Label>
+            <Label htmlFor="p-cat">ক্যাটাগরি</Label>
             {categories.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
                 {categories.map(c => {
@@ -906,10 +916,10 @@ function ProductFormDialog({
                 })}
               </div>
             )}
-            <Input id="p-cat" className="h-11" placeholder={categories.length ? 'Or type a new category' : 'e.g. Drinks, Snacks, Grocery'}
+            <Input id="p-cat" className="h-11" placeholder={categories.length ? 'অথবা নতুন ক্যাটাগরি লিখুন' : 'যেমন: পানীয়, স্ন্যাকস, মুদি'}
               value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} />
           </div>
-          <FormActions onCancel={onClose} label={product ? 'Update' : 'Add'} />
+          <FormActions onCancel={onClose} label={product ? 'আপডেট' : 'যোগ করুন'} />
         </form>
       </DialogContent>
     </Dialog>
@@ -929,7 +939,7 @@ function ProductManagement() {
   const categories = useMemo(() => getCategories(products), [products]);
   const counts = useMemo(() => {
     const m: Record<string, number> = {};
-    products.forEach(p => { const c = p.category || 'General'; m[c] = (m[c] || 0) + 1; });
+    products.forEach(p => { const c = catOf(p.category); m[c] = (m[c] || 0) + 1; });
     return m;
   }, [products]);
   const activeCat = categories.includes(cat) ? cat : ''; // falls back to "All" if the category became empty
@@ -937,9 +947,9 @@ function ProductManagement() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return products
-      .filter(p => (!activeCat || (p.category || 'General') === activeCat)
+      .filter(p => (!activeCat || catOf(p.category) === activeCat)
         && (!q || p.name.toLowerCase().includes(q) || p.category?.toLowerCase().includes(q)))
-      .sort((a, b) => (a.category || 'General').localeCompare(b.category || 'General') || a.name.localeCompare(b.name));
+      .sort((a, b) => catOf(a.category).localeCompare(catOf(b.category)) || a.name.localeCompare(b.name));
   }, [products, search, activeCat]);
 
   const openAdd = () => { setEditing(null); setFormOpen(true); };
@@ -948,8 +958,8 @@ function ProductManagement() {
   return (
     <div className="space-y-3 sm:space-y-4">
       <div className="flex gap-2">
-        <SearchBar value={search} onChange={setSearch} placeholder="Search products…" />
-        <Button onClick={openAdd} className={`h-10 shrink-0 ${PRIMARY_BTN}`}><Plus /> <span className="max-sm:hidden">{activeCat ? `Add to ${activeCat}` : 'Add Product'}</span><span className="sm:hidden">Add</span></Button>
+        <SearchBar value={search} onChange={setSearch} placeholder="পণ্য খুঁজুন…" />
+        <Button onClick={openAdd} className={`h-10 shrink-0 ${PRIMARY_BTN}`}><Plus /> <span className="max-sm:hidden">{activeCat ? `${activeCat}-এ যোগ` : 'পণ্য যোগ'}</span><span className="sm:hidden">যোগ</span></Button>
       </div>
 
       {categories.length > 0 && (
@@ -960,8 +970,8 @@ function ProductManagement() {
       <Card className="gap-0 overflow-hidden py-0 shadow-sm">
         <CardContent className="p-0">
           {filtered.length === 0 ? (
-            <EmptyState icon={Package} text={products.length ? 'No products match your search' : 'No products yet'}
-              action={!products.length && <Button size="sm" className={PRIMARY_BTN} onClick={openAdd}>Add first product</Button>} />
+            <EmptyState icon={Package} text={products.length ? 'খোঁজা পণ্য পাওয়া যায়নি' : 'এখনো কোনো পণ্য নেই'}
+              action={!products.length && <Button size="sm" className={PRIMARY_BTN} onClick={openAdd}>প্রথম পণ্য যোগ করুন</Button>} />
           ) : (
             <>
               {/* Mobile list */}
@@ -974,16 +984,16 @@ function ProductManagement() {
                           {p.pricingType === 'weight' && <Scale className="h-3.5 w-3.5 shrink-0 text-blue-600" />}
                           <span className="truncate">{p.name}</span>
                         </p>
-                        <p className="text-[11px] text-slate-500">{p.category || 'General'}</p>
+                        <p className="text-[11px] text-slate-500">{catOf(p.category)}</p>
                       </div>
                       <div className="text-right">
-                        <p className="text-sm font-semibold">{formatCurrency(p.price)}{p.pricingType === 'weight' && <span className="text-[10px] font-normal text-slate-400">/kg</span>}</p>
+                        <p className="text-sm font-semibold">{formatCurrency(p.price)}{p.pricingType === 'weight' && <span className="text-[10px] font-normal text-slate-400">/কেজি</span>}</p>
                         <p className={`text-[11px] ${p.stock <= LOW_STOCK ? 'font-semibold text-red-600' : 'text-slate-500'}`}>
-                          {p.stock} {p.unit}
+                          {p.stock} {unitBn(p.unit)}
                         </p>
                       </div>
                     </button>
-                    <Button variant="ghost" size="icon" className="mr-1 h-10 w-10 shrink-0" aria-label={`Delete ${p.name}`} onClick={() => setDeleteId(p.id)}>
+                    <Button variant="ghost" size="icon" className="mr-1 h-10 w-10 shrink-0" aria-label={`মুছুন ${p.name}`} onClick={() => setDeleteId(p.id)}>
                       <Trash2 className="h-4 w-4 text-red-500" />
                     </Button>
                   </li>
@@ -995,9 +1005,9 @@ function ProductManagement() {
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-slate-50">
-                      <TableHead>Name</TableHead><TableHead>Type</TableHead>
-                      <TableHead className="text-right">Price</TableHead><TableHead className="text-right">Stock</TableHead>
-                      <TableHead>Category</TableHead><TableHead className="text-right">Actions</TableHead>
+                      <TableHead>নাম</TableHead><TableHead>ধরন</TableHead>
+                      <TableHead className="text-right">দাম</TableHead><TableHead className="text-right">স্টক</TableHead>
+                      <TableHead>ক্যাটাগরি</TableHead><TableHead className="text-right">কাজ</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1008,13 +1018,13 @@ function ProductManagement() {
                             {p.pricingType === 'weight' && <Scale className="h-4 w-4 text-blue-600" />}{p.name}
                           </span>
                         </TableCell>
-                        <TableCell><Badge variant={p.pricingType === 'weight' ? 'default' : 'secondary'}>{p.pricingType === 'weight' ? 'Per KG' : 'Fixed'}</Badge></TableCell>
-                        <TableCell className="text-right">{formatCurrency(p.price)}{p.pricingType === 'weight' && <span className="text-xs text-slate-400">/kg</span>}</TableCell>
-                        <TableCell className={`text-right ${p.stock <= LOW_STOCK ? 'font-semibold text-red-600' : ''}`}>{p.stock} {p.unit}</TableCell>
+                        <TableCell><Badge variant={p.pricingType === 'weight' ? 'default' : 'secondary'}>{p.pricingType === 'weight' ? 'কেজি দরে' : 'পিস দরে'}</Badge></TableCell>
+                        <TableCell className="text-right">{formatCurrency(p.price)}{p.pricingType === 'weight' && <span className="text-xs text-slate-400">/কেজি</span>}</TableCell>
+                        <TableCell className={`text-right ${p.stock <= LOW_STOCK ? 'font-semibold text-red-600' : ''}`}>{p.stock} {unitBn(p.unit)}</TableCell>
                         <TableCell><Badge variant="outline">{p.category || '-'}</Badge></TableCell>
                         <TableCell className="text-right">
-                          <Button variant="ghost" size="icon" aria-label={`Edit ${p.name}`} onClick={() => openEdit(p)}><Pencil className="h-4 w-4" /></Button>
-                          <Button variant="ghost" size="icon" aria-label={`Delete ${p.name}`} onClick={() => setDeleteId(p.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
+                          <Button variant="ghost" size="icon" aria-label={`সম্পাদনা ${p.name}`} onClick={() => openEdit(p)}><Pencil className="h-4 w-4" /></Button>
+                          <Button variant="ghost" size="icon" aria-label={`মুছুন ${p.name}`} onClick={() => setDeleteId(p.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -1028,10 +1038,10 @@ function ProductManagement() {
 
       <ProductFormDialog open={formOpen} onClose={() => setFormOpen(false)} product={editing} defaultCategory={activeCat} />
       <ConfirmDialog
-        open={!!deleteId} title="Delete product?" description="This action cannot be undone."
+        open={!!deleteId} title="পণ্য মুছবেন?" description="এটি আর ফেরানো যাবে না।"
         onCancel={() => setDeleteId(null)}
         onConfirm={() => {
-          if (deleteId) { deleteProduct(deleteId); toast({ title: 'Product deleted' }); }
+          if (deleteId) { deleteProduct(deleteId); toast({ title: 'পণ্য মুছে ফেলা হয়েছে' }); }
           setDeleteId(null);
         }}
       />
@@ -1070,11 +1080,11 @@ function CustomerManagement() {
 
   const submitCustomer = () => {
     if (!form.name.trim()) {
-      toast({ title: 'Name is required', variant: 'destructive' });
+      toast({ title: 'নাম দিতে হবে', variant: 'destructive' });
       return;
     }
     addCustomer({ name: form.name.trim(), phone: form.phone.trim(), address: form.address.trim() });
-    toast({ title: 'Customer added' });
+    toast({ title: 'কাস্টমার যোগ হয়েছে' });
     setAddOpen(false);
     setForm({ name: '', phone: '', address: '' });
   };
@@ -1082,15 +1092,15 @@ function CustomerManagement() {
   const submitPayment = () => {
     const amount = Number(payAmount);
     if (!payCustomer || !(amount > 0)) {
-      toast({ title: 'Enter a valid amount', variant: 'destructive' });
+      toast({ title: 'সঠিক টাকার পরিমাণ দিন', variant: 'destructive' });
       return;
     }
     if (amount > payDue) {
-      toast({ title: 'Too much', description: `Current due is ${formatCurrency(payDue)}`, variant: 'destructive' });
+      toast({ title: 'পরিমাণ বেশি', description: `বর্তমান বাকি ${formatCurrency(payDue)}`, variant: 'destructive' });
       return;
     }
     addDuePayment({ customerId: payCustomer.id, customerName: payCustomer.name, amount });
-    toast({ title: 'Payment recorded', description: formatCurrency(amount) });
+    toast({ title: 'পেমেন্ট জমা হয়েছে', description: formatCurrency(amount) });
     setPayId(null);
     setPayAmount('');
   };
@@ -1098,12 +1108,12 @@ function CustomerManagement() {
   return (
     <div className="space-y-3 sm:space-y-4">
       <div className="flex gap-2">
-        <SearchBar value={search} onChange={setSearch} placeholder="Search customers…" />
-        <Button onClick={() => setAddOpen(true)} className={`h-10 shrink-0 ${PRIMARY_BTN}`}><Plus /> <span className="max-sm:hidden">Add Customer</span><span className="sm:hidden">Add</span></Button>
+        <SearchBar value={search} onChange={setSearch} placeholder="কাস্টমার খুঁজুন…" />
+        <Button onClick={() => setAddOpen(true)} className={`h-10 shrink-0 ${PRIMARY_BTN}`}><Plus /> <span className="max-sm:hidden">কাস্টমার যোগ</span><span className="sm:hidden">যোগ</span></Button>
       </div>
 
       {filtered.length === 0 ? (
-        <Card><CardContent className="p-0"><EmptyState icon={Users} text="No customers found" /></CardContent></Card>
+        <Card><CardContent className="p-0"><EmptyState icon={Users} text="কোনো কাস্টমার পাওয়া যায়নি" /></CardContent></Card>
       ) : (
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
           {filtered.map(c => {
@@ -1121,16 +1131,16 @@ function CustomerManagement() {
                     {c.address && <p className="truncate text-xs text-slate-400">{c.address}</p>}
                   </div>
                   <Badge variant={due > 0 ? 'destructive' : 'secondary'} className="shrink-0 text-[10px]">
-                    {due > 0 ? `${formatCurrency(due)} due` : 'No due'}
+                    {due > 0 ? `বাকি ${formatCurrency(due)}` : 'বাকি নেই'}
                   </Badge>
                 </div>
                 <div className="mt-2 flex gap-2">
-                  <Button variant="outline" className="h-9 flex-1 text-xs" onClick={() => setDetailsId(c.id)}>Details</Button>
+                  <Button variant="outline" className="h-9 flex-1 text-xs" onClick={() => setDetailsId(c.id)}>বিস্তারিত</Button>
                   {due > 0 && (
                     <Button className="h-9 bg-emerald-600 text-xs text-white hover:bg-emerald-700"
-                      onClick={() => { setPayId(c.id); setPayAmount(''); }}>Pay</Button>
+                      onClick={() => { setPayId(c.id); setPayAmount(''); }}>পরিশোধ</Button>
                   )}
-                  <Button variant="ghost" size="icon" className="h-9 w-9" aria-label={`Delete ${c.name}`} onClick={() => setDeleteId(c.id)}>
+                  <Button variant="ghost" size="icon" className="h-9 w-9" aria-label={`মুছুন ${c.name}`} onClick={() => setDeleteId(c.id)}>
                     <Trash2 className="h-4 w-4 text-red-500" />
                   </Button>
                 </div>
@@ -1143,15 +1153,15 @@ function CustomerManagement() {
       {/* Add */}
       <Dialog open={addOpen} onOpenChange={o => { if (!o) setAddOpen(false); }}>
         <DialogContent className={`${SHEET} sm:max-w-md`}>
-          <DialogHeader><DialogTitle>Add Customer</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>নতুন কাস্টমার</DialogTitle></DialogHeader>
           <form className="space-y-3" onSubmit={e => { e.preventDefault(); submitCustomer(); }}>
-            <div className="space-y-1.5"><Label htmlFor="c-name">Name *</Label>
+            <div className="space-y-1.5"><Label htmlFor="c-name">নাম *</Label>
               <Input id="c-name" className="h-11" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
-            <div className="space-y-1.5"><Label htmlFor="c-phone">Phone</Label>
+            <div className="space-y-1.5"><Label htmlFor="c-phone">ফোন</Label>
               <Input id="c-phone" type="tel" inputMode="tel" className="h-11" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} /></div>
-            <div className="space-y-1.5"><Label htmlFor="c-addr">Address</Label>
+            <div className="space-y-1.5"><Label htmlFor="c-addr">ঠিকানা</Label>
               <Input id="c-addr" className="h-11" value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} /></div>
-            <FormActions onCancel={() => setAddOpen(false)} label="Add" />
+            <FormActions onCancel={() => setAddOpen(false)} label="যোগ করুন" />
           </form>
         </DialogContent>
       </Dialog>
@@ -1163,24 +1173,24 @@ function CustomerManagement() {
           {detailsCustomer && (
             <div className="space-y-3">
               <div className="grid grid-cols-3 gap-2 rounded-lg bg-slate-50 p-3 text-xs">
-                <div><p className="text-slate-500">Phone</p><p className="truncate font-medium">{detailsCustomer.phone || '-'}</p></div>
-                <div><p className="text-slate-500">Address</p><p className="truncate font-medium">{detailsCustomer.address || '-'}</p></div>
-                <div><p className="text-slate-500">Due</p><p className="font-semibold text-red-600">{formatCurrency(Math.max(0, dues[detailsCustomer.id] ?? 0))}</p></div>
+                <div><p className="text-slate-500">ফোন</p><p className="truncate font-medium">{detailsCustomer.phone || '-'}</p></div>
+                <div><p className="text-slate-500">ঠিকানা</p><p className="truncate font-medium">{detailsCustomer.address || '-'}</p></div>
+                <div><p className="text-slate-500">বাকি</p><p className="font-semibold text-red-600">{formatCurrency(Math.max(0, dues[detailsCustomer.id] ?? 0))}</p></div>
               </div>
-              <p className="text-xs font-medium text-slate-500">Purchase history</p>
+              <p className="text-xs font-medium text-slate-500">কেনার ইতিহাস</p>
               <ul className="max-h-64 divide-y overflow-y-auto rounded-lg border">
                 {sales.filter(s => s.customerId === detailsCustomer.id).sort(byNewest).map(s => (
                   <li key={s.id} className="flex items-center gap-2 px-3 py-2">
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-xs font-medium">{saleSummary(s)}</p>
-                      <p className="text-[11px] text-slate-500">{format(new Date(s.createdAt), 'MMM d, yyyy')}</p>
+                      <p className="text-[11px] text-slate-500">{fmt(new Date(s.createdAt), 'MMM d, yyyy')}</p>
                     </div>
                     <PaymentBadge type={s.paymentType} />
                     <span className="text-xs font-semibold">{formatCurrency(s.total)}</span>
                   </li>
                 ))}
                 {sales.every(s => s.customerId !== detailsCustomer.id) && (
-                  <li className="p-4 text-center text-xs text-slate-500">No purchases yet</li>
+                  <li className="p-4 text-center text-xs text-slate-500">এখনো কেনাকাটা নেই</li>
                 )}
               </ul>
             </div>
@@ -1191,26 +1201,26 @@ function CustomerManagement() {
       {/* Payment */}
       <Dialog open={!!payId} onOpenChange={o => { if (!o) setPayId(null); }}>
         <DialogContent className={`${SHEET} sm:max-w-sm`}>
-          <DialogHeader><DialogTitle>Receive Payment{payCustomer && ` · ${payCustomer.name}`}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>বাকি আদায়{payCustomer && ` · ${payCustomer.name}`}</DialogTitle></DialogHeader>
           <form className="space-y-3" onSubmit={e => { e.preventDefault(); submitPayment(); }}>
-            <p className="text-sm">Current due: <span className="font-bold text-red-600">{formatCurrency(payDue)}</span></p>
+            <p className="text-sm">বর্তমান বাকি: <span className="font-bold text-red-600">{formatCurrency(payDue)}</span></p>
             <div className="space-y-1.5">
-              <Label htmlFor="pay-amt">Amount (৳)</Label>
+              <Label htmlFor="pay-amt">টাকার পরিমাণ (৳)</Label>
               <div className="flex gap-2">
                 <Input id="pay-amt" inputMode="decimal" className="h-11" value={payAmount} onChange={e => setPayAmount(e.target.value)} />
-                <Button type="button" variant="outline" className="h-11 shrink-0" onClick={() => setPayAmount(String(payDue))}>Full</Button>
+                <Button type="button" variant="outline" className="h-11 shrink-0" onClick={() => setPayAmount(String(payDue))}>পুরো</Button>
               </div>
             </div>
-            <FormActions onCancel={() => setPayId(null)} label="Record" submitClass="bg-emerald-600 text-white hover:bg-emerald-700" />
+            <FormActions onCancel={() => setPayId(null)} label="জমা করুন" submitClass="bg-emerald-600 text-white hover:bg-emerald-700" />
           </form>
         </DialogContent>
       </Dialog>
 
       <ConfirmDialog
-        open={!!deleteId} title="Delete customer?" description="Sales history will be preserved."
+        open={!!deleteId} title="কাস্টমার মুছবেন?" description="বিক্রির ইতিহাস থেকে যাবে।"
         onCancel={() => setDeleteId(null)}
         onConfirm={() => {
-          if (deleteId) { deleteCustomer(deleteId); toast({ title: 'Customer deleted' }); }
+          if (deleteId) { deleteCustomer(deleteId); toast({ title: 'কাস্টমার মুছে ফেলা হয়েছে' }); }
           setDeleteId(null);
         }}
       />
@@ -1222,7 +1232,7 @@ function CustomerManagement() {
 /* Expenses                                                            */
 /* ------------------------------------------------------------------ */
 
-const EXPENSE_CATEGORIES = ['Rent', 'Utilities', 'Salary', 'Transport', 'Stock', 'Other'];
+const EXPENSE_CATEGORIES = ['ভাড়া', 'ইউটিলিটি বিল', 'বেতন', 'যাতায়াত', 'মাল কেনা', 'অন্যান্য'];
 
 function ExpenseFormDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const addExpense = useStore(s => s.addExpense);
@@ -1233,25 +1243,25 @@ function ExpenseFormDialog({ open, onClose }: { open: boolean; onClose: () => vo
   const submit = () => {
     const amount = Number(form.amount);
     if (!form.description.trim() || !(amount > 0)) {
-      toast({ title: 'Check the form', description: 'Description and a valid amount are required', variant: 'destructive' });
+      toast({ title: 'ফর্মটি দেখুন', description: 'বিবরণ ও সঠিক টাকার পরিমাণ দিতে হবে', variant: 'destructive' });
       return;
     }
-    addExpense({ description: form.description.trim(), amount, category: form.category.trim() || 'General' });
-    toast({ title: 'Expense added', description: formatCurrency(amount) });
+    addExpense({ description: form.description.trim(), amount, category: form.category.trim() || DEFAULT_CATEGORY });
+    toast({ title: 'খরচ যোগ হয়েছে', description: formatCurrency(amount) });
     onClose();
   };
 
   return (
     <Dialog open={open} onOpenChange={o => { if (!o) onClose(); }}>
       <DialogContent className={`${SHEET} sm:max-w-md`}>
-        <DialogHeader><DialogTitle>Add Expense</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>খরচ যোগ</DialogTitle></DialogHeader>
         <form className="space-y-3" onSubmit={e => { e.preventDefault(); submit(); }}>
-          <div className="space-y-1.5"><Label htmlFor="e-desc">Description *</Label>
+          <div className="space-y-1.5"><Label htmlFor="e-desc">বিবরণ *</Label>
             <Input id="e-desc" className="h-11" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></div>
-          <div className="space-y-1.5"><Label htmlFor="e-amt">Amount (৳) *</Label>
+          <div className="space-y-1.5"><Label htmlFor="e-amt">টাকার পরিমাণ (৳) *</Label>
             <Input id="e-amt" inputMode="decimal" className="h-11" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></div>
           <div className="space-y-1.5">
-            <Label htmlFor="e-cat">Category</Label>
+            <Label htmlFor="e-cat">ক্যাটাগরি</Label>
             <Input id="e-cat" className="h-11" value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} />
             <div className="flex flex-wrap gap-1.5 pt-1">
               {EXPENSE_CATEGORIES.map(c => (
@@ -1262,7 +1272,7 @@ function ExpenseFormDialog({ open, onClose }: { open: boolean; onClose: () => vo
               ))}
             </div>
           </div>
-          <FormActions onCancel={onClose} label="Add" />
+          <FormActions onCancel={onClose} label="যোগ করুন" />
         </form>
       </DialogContent>
     </Dialog>
@@ -1283,18 +1293,18 @@ function ExpenseTracking() {
     <div className="space-y-3 sm:space-y-4">
       <div className="flex items-center gap-2">
         <RangeTabs value={range} onChange={setRange} />
-        <Button onClick={() => setOpen(true)} className={`ml-auto h-10 shrink-0 ${PRIMARY_BTN}`}><Plus /> Add</Button>
+        <Button onClick={() => setOpen(true)} className={`ml-auto h-10 shrink-0 ${PRIMARY_BTN}`}><Plus /> যোগ</Button>
       </div>
 
       <div className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-sm shadow-sm">
-        <span className="text-slate-500">{filtered.length} expenses</span>
+        <span className="text-slate-500">{filtered.length}টি খরচ</span>
         <span className="font-semibold text-red-600">-{formatCurrency(total)}</span>
       </div>
 
       <Card className="gap-0 overflow-hidden py-0 shadow-sm">
         <CardContent className="p-0">
           {filtered.length === 0 ? (
-            <EmptyState icon={Wallet} text="No expenses found" />
+            <EmptyState icon={Wallet} text="কোনো খরচ পাওয়া যায়নি" />
           ) : (
             <>
               <ul className="divide-y sm:hidden">
@@ -1302,10 +1312,10 @@ function ExpenseTracking() {
                   <li key={e.id} className="flex items-center gap-2 px-3 py-2.5">
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium">{e.description}</p>
-                      <p className="text-[11px] text-slate-500">{format(new Date(e.createdAt), 'MMM d')} · {e.category || 'General'}</p>
+                      <p className="text-[11px] text-slate-500">{fmt(new Date(e.createdAt), 'MMM d')} · {catOf(e.category)}</p>
                     </div>
                     <span className="text-sm font-semibold text-red-600">-{formatCurrency(e.amount)}</span>
-                    <Button variant="ghost" size="icon" className="h-10 w-10 shrink-0" aria-label={`Delete ${e.description}`} onClick={() => setDeleteId(e.id)}>
+                    <Button variant="ghost" size="icon" className="h-10 w-10 shrink-0" aria-label={`মুছুন ${e.description}`} onClick={() => setDeleteId(e.id)}>
                       <Trash2 className="h-4 w-4 text-red-500" />
                     </Button>
                   </li>
@@ -1315,19 +1325,19 @@ function ExpenseTracking() {
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-slate-50">
-                      <TableHead>Date</TableHead><TableHead>Description</TableHead><TableHead>Category</TableHead>
-                      <TableHead className="text-right">Amount</TableHead><TableHead className="text-right">Action</TableHead>
+                      <TableHead>তারিখ</TableHead><TableHead>বিবরণ</TableHead><TableHead>ক্যাটাগরি</TableHead>
+                      <TableHead className="text-right">টাকা</TableHead><TableHead className="text-right">কাজ</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {filtered.map(e => (
                       <TableRow key={e.id}>
-                        <TableCell className="text-xs">{format(new Date(e.createdAt), 'MMM d, yyyy')}</TableCell>
+                        <TableCell className="text-xs">{fmt(new Date(e.createdAt), 'MMM d, yyyy')}</TableCell>
                         <TableCell className="text-xs">{e.description}</TableCell>
-                        <TableCell><Badge variant="outline">{e.category || 'General'}</Badge></TableCell>
+                        <TableCell><Badge variant="outline">{catOf(e.category)}</Badge></TableCell>
                         <TableCell className="text-right text-xs font-medium text-red-600">-{formatCurrency(e.amount)}</TableCell>
                         <TableCell className="text-right">
-                          <Button variant="ghost" size="icon" aria-label={`Delete ${e.description}`} onClick={() => setDeleteId(e.id)}>
+                          <Button variant="ghost" size="icon" aria-label={`মুছুন ${e.description}`} onClick={() => setDeleteId(e.id)}>
                             <Trash2 className="h-4 w-4 text-red-500" />
                           </Button>
                         </TableCell>
@@ -1343,10 +1353,10 @@ function ExpenseTracking() {
 
       <ExpenseFormDialog open={open} onClose={() => setOpen(false)} />
       <ConfirmDialog
-        open={!!deleteId} title="Delete expense?"
+        open={!!deleteId} title="খরচ মুছবেন?"
         onCancel={() => setDeleteId(null)}
         onConfirm={() => {
-          if (deleteId) { deleteExpense(deleteId); toast({ title: 'Expense deleted' }); }
+          if (deleteId) { deleteExpense(deleteId); toast({ title: 'খরচ মুছে ফেলা হয়েছে' }); }
           setDeleteId(null);
         }}
       />
@@ -1377,18 +1387,18 @@ function Reports() {
       for (let i = 23; i >= 0; i--) {
         const h = new Date(today); h.setHours(today.getHours() - i, 0, 0, 0);
         const hEnd = new Date(h); hEnd.setHours(h.getHours() + 1);
-        push(format(h, 'ha'), h, hEnd);
+        push(fmt(h, 'HH:mm'), h, hEnd);
       }
     } else if (period === 'weekly' || period === 'monthly') {
       const n = period === 'weekly' ? 7 : 30;
       for (let i = n - 1; i >= 0; i--) {
         const d = subDays(today, i);
-        push(format(d, period === 'weekly' ? 'EEE' : 'MMM d'), startOfDay(d), endOfDay(d));
+        push(fmt(d, period === 'weekly' ? 'EEE' : 'MMM d'), startOfDay(d), endOfDay(d));
       }
     } else {
       for (let i = 11; i >= 0; i--) {
         const m = subMonths(today, i);
-        push(format(m, 'MMM'), startOfMonth(m), endOfMonth(m));
+        push(fmt(m, 'MMM'), startOfMonth(m), endOfMonth(m));
       }
     }
     return out;
@@ -1396,8 +1406,8 @@ function Reports() {
   }, [sales, expenses, period]);
 
   const paymentData = useMemo(() => [
-    { name: 'Cash', value: sales.filter(s => s.paymentType === 'cash').reduce((a, s) => a + s.total, 0), color: COLORS[0] },
-    { name: 'Due', value: sales.filter(s => s.paymentType === 'due').reduce((a, s) => a + s.total, 0), color: COLORS[1] },
+    { name: 'নগদ', value: sales.filter(s => s.paymentType === 'cash').reduce((a, s) => a + s.total, 0), color: COLORS[0] },
+    { name: 'বাকি', value: sales.filter(s => s.paymentType === 'due').reduce((a, s) => a + s.total, 0), color: COLORS[1] },
   ], [sales]);
 
   const topProducts = useMemo(() => {
@@ -1411,7 +1421,7 @@ function Reports() {
 
   const expenseByCategory = useMemo(() => {
     const map: Record<string, number> = {};
-    expenses.forEach(e => { const c = e.category || 'General'; map[c] = (map[c] || 0) + e.amount; });
+    expenses.forEach(e => { const c = catOf(e.category); map[c] = (map[c] || 0) + e.amount; });
     return Object.entries(map).map(([name, value], i) => ({ name, value, color: COLORS[i % COLORS.length] }));
   }, [expenses]);
 
@@ -1426,21 +1436,21 @@ function Reports() {
         {(['daily', 'weekly', 'monthly', 'yearly'] as const).map(p => (
           <button key={p} onClick={() => setPeriod(p)}
             className={`h-8 rounded-md text-xs font-medium capitalize ${period === p ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600'}`}>
-            {p}
+            {PERIOD_BN[p]}
           </button>
         ))}
       </div>
 
       <div className="grid grid-cols-2 gap-2 sm:gap-4 lg:grid-cols-4">
-        <StatCard label="Revenue" value={formatCurrency(totalRevenue)} sub="All time" icon={Banknote} tone="green" />
-        <StatCard label="Expenses" value={formatCurrency(totalExpenses)} sub="All time" icon={Receipt} tone="red" />
-        <StatCard label="Net Profit" value={formatCurrency(net)} sub="Revenue − expenses" icon={TrendingUp} tone={net >= 0 ? 'blue' : 'red'} />
-        <StatCard label="Dues" value={formatCurrency(totalDue)} sub="Outstanding" icon={CreditCard} tone="orange" />
+        <StatCard label="বিক্রি" value={formatCurrency(totalRevenue)} sub="সর্বমোট" icon={Banknote} tone="green" />
+        <StatCard label="খরচ" value={formatCurrency(totalExpenses)} sub="সর্বমোট" icon={Receipt} tone="red" />
+        <StatCard label="নিট লাভ" value={formatCurrency(net)} sub="বিক্রি − খরচ" icon={TrendingUp} tone={net >= 0 ? 'blue' : 'red'} />
+        <StatCard label="বাকি" value={formatCurrency(totalDue)} sub="অনাদায়ী" icon={CreditCard} tone="orange" />
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:gap-6 lg:grid-cols-2">
         <Card className="gap-2 py-3 shadow-sm lg:col-span-2 sm:py-6">
-          <CardHeader className="px-3 sm:px-6"><CardTitle className="text-sm sm:text-base">Sales vs Expenses</CardTitle></CardHeader>
+          <CardHeader className="px-3 sm:px-6"><CardTitle className="text-sm sm:text-base">বিক্রি বনাম খরচ</CardTitle></CardHeader>
           <CardContent className="px-1 sm:px-6">
             <div className="h-52 sm:h-72">
               <ResponsiveContainer width="100%" height="100%">
@@ -1458,8 +1468,8 @@ function Reports() {
                   <YAxis tick={{ fontSize: 10 }} width={42} />
                   <Tooltip formatter={fmtTip} />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
-                  <Area type="monotone" dataKey="sales" stroke="#1d4ed8" fill="url(#gSales)" name="Sales" />
-                  <Area type="monotone" dataKey="expenses" stroke="#d97706" fill="url(#gExp)" name="Expenses" />
+                  <Area type="monotone" dataKey="sales" stroke="#1d4ed8" fill="url(#gSales)" name="বিক্রি" />
+                  <Area type="monotone" dataKey="expenses" stroke="#d97706" fill="url(#gExp)" name="খরচ" />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -1467,7 +1477,7 @@ function Reports() {
         </Card>
 
         <Card className="gap-2 py-3 shadow-sm sm:py-6">
-          <CardHeader className="px-3 sm:px-6"><CardTitle className="text-sm sm:text-base">Cash vs Due</CardTitle></CardHeader>
+          <CardHeader className="px-3 sm:px-6"><CardTitle className="text-sm sm:text-base">নগদ বনাম বাকি</CardTitle></CardHeader>
           <CardContent className="px-1 sm:px-6">
             <div className="h-48 sm:h-60">
               <ResponsiveContainer width="100%" height="100%">
@@ -1484,9 +1494,9 @@ function Reports() {
         </Card>
 
         <Card className="gap-2 py-3 shadow-sm sm:py-6">
-          <CardHeader className="px-3 sm:px-6"><CardTitle className="text-sm sm:text-base">Expenses by Category</CardTitle></CardHeader>
+          <CardHeader className="px-3 sm:px-6"><CardTitle className="text-sm sm:text-base">ক্যাটাগরি অনুযায়ী খরচ</CardTitle></CardHeader>
           <CardContent className="px-1 sm:px-6">
-            {expenseByCategory.length === 0 ? <EmptyState icon={Wallet} text="No expenses" /> : (
+            {expenseByCategory.length === 0 ? <EmptyState icon={Wallet} text="কোনো খরচ নেই" /> : (
               <div className="h-48 sm:h-60">
                 <ResponsiveContainer width="100%" height="100%">
                   <RechartsBar data={expenseByCategory}>
@@ -1505,9 +1515,9 @@ function Reports() {
         </Card>
 
         <Card className="gap-2 py-3 shadow-sm sm:py-6 lg:col-span-2">
-          <CardHeader className="px-3 sm:px-6"><CardTitle className="text-sm sm:text-base">Top Selling Products</CardTitle></CardHeader>
+          <CardHeader className="px-3 sm:px-6"><CardTitle className="text-sm sm:text-base">সর্বাধিক বিক্রিত পণ্য</CardTitle></CardHeader>
           <CardContent className="px-1 sm:px-6">
-            {topProducts.length === 0 ? <EmptyState icon={Package} text="No sales yet" /> : (
+            {topProducts.length === 0 ? <EmptyState icon={Package} text="এখনো কোনো বিক্রি নেই" /> : (
               <div className="h-48 sm:h-60">
                 <ResponsiveContainer width="100%" height="100%">
                   <RechartsBar data={topProducts} layout="vertical" margin={{ left: 0, right: 12 }}>
@@ -1515,7 +1525,7 @@ function Reports() {
                     <XAxis type="number" tick={{ fontSize: 10 }} />
                     <YAxis dataKey="name" type="category" tick={{ fontSize: 10 }} width={72} />
                     <Tooltip formatter={fmtTip} />
-                    <Bar dataKey="revenue" fill="#1d4ed8" name="Revenue" radius={[0, 4, 4, 0]} />
+                    <Bar dataKey="revenue" fill="#1d4ed8" name="বিক্রি" radius={[0, 4, 4, 0]} />
                   </RechartsBar>
                 </ResponsiveContainer>
               </div>
