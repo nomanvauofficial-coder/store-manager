@@ -3,7 +3,9 @@ import { create } from 'zustand';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 import { toast } from '@/hooks/use-toast';
-import { Product, Customer, Sale, DuePayment, Expense, SaleItem } from './types';
+import {
+  Product, Customer, Sale, DuePayment, Expense, SaleItem, Supplier, Purchase, PurchaseItem, SupplierPayment,
+} from './types';
 
 type Row = Record<string, any>;
 
@@ -12,7 +14,7 @@ const uid = () =>
 
 /* ---------- row <-> app mapping ---------- */
 const toProduct = (r: Row): Product => ({
-  id: r.id, name: r.name, price: Number(r.price), stock: Number(r.stock),
+  id: r.id, name: r.name, price: Number(r.price), costPrice: Number(r.cost_price ?? 0), stock: Number(r.stock),
   category: r.category, pricingType: r.pricing_type, unit: r.unit,
   createdAt: r.created_at, updatedAt: r.updated_at,
 });
@@ -21,6 +23,7 @@ const fromProduct = (p: Partial<Product>): Row => {
   if (p.id !== undefined) r.id = p.id;
   if (p.name !== undefined) r.name = p.name;
   if (p.price !== undefined) r.price = p.price;
+  if (p.costPrice !== undefined) r.cost_price = p.costPrice;
   if (p.stock !== undefined) r.stock = p.stock;
   if (p.category !== undefined) r.category = p.category;
   if (p.pricingType !== undefined) r.pricing_type = p.pricingType;
@@ -38,6 +41,17 @@ const toSale = (r: Row): Sale => ({
 });
 const toDue = (r: Row): DuePayment => ({
   id: r.id, customerId: r.customer_id, customerName: r.customer_name, amount: Number(r.amount), createdAt: r.created_at,
+});
+const toSupplier = (r: Row): Supplier => ({
+  id: r.id, name: r.name, phone: r.phone ?? '', address: r.address ?? '', createdAt: r.created_at,
+});
+const toPurchase = (r: Row): Purchase => ({
+  id: r.id, supplierId: r.supplier_id, supplierName: r.supplier_name ?? '', note: r.note ?? '',
+  items: (r.items ?? []) as PurchaseItem[], total: Number(r.total), paid: Number(r.paid), createdAt: r.created_at,
+});
+const toSupplierPayment = (r: Row): SupplierPayment => ({
+  id: r.id, supplierId: r.supplier_id, supplierName: r.supplier_name ?? '', amount: Number(r.amount),
+  note: r.note ?? '', createdAt: r.created_at,
 });
 const toExpense = (r: Row): Expense => ({
   id: r.id, description: r.description, amount: Number(r.amount), category: r.category, createdAt: r.created_at,
@@ -62,6 +76,9 @@ const TABLES = {
   sales: { table: 'sales', map: toSale },
   duePayments: { table: 'due_payments', map: toDue },
   expenses: { table: 'expenses', map: toExpense },
+  suppliers: { table: 'suppliers', map: toSupplier },
+  purchases: { table: 'purchases', map: toPurchase },
+  supplierPayments: { table: 'supplier_payments', map: toSupplierPayment },
 } as const;
 type Key = keyof typeof TABLES;
 
@@ -71,6 +88,9 @@ interface StoreState {
   sales: Sale[];
   duePayments: DuePayment[];
   expenses: Expense[];
+  suppliers: Supplier[];
+  purchases: Purchase[];
+  supplierPayments: SupplierPayment[];
   _loaded: boolean;
 
   start: () => Promise<void>;
@@ -88,10 +108,18 @@ interface StoreState {
   addSale: (sale: Omit<Sale, 'id' | 'createdAt'>) => void;
   deleteSale: (id: string) => void;
 
-  addDuePayment: (payment: Omit<DuePayment, 'id' | 'createdAt'>) => void;
+  addDuePayment: (payment: Omit<DuePayment, 'id' | 'createdAt'> & { createdAt?: string }) => void;
+  deleteDuePayment: (id: string) => void;
 
   addExpense: (expense: Omit<Expense, 'id' | 'createdAt'>) => void;
   deleteExpense: (id: string) => void;
+
+  addSupplier: (supplier: Omit<Supplier, 'id' | 'createdAt'>) => void;
+  deleteSupplier: (id: string) => void;
+  addPurchase: (purchase: Omit<Purchase, 'id' | 'createdAt'> & { createdAt?: string }) => void;
+  deletePurchase: (id: string) => void;
+  addSupplierPayment: (payment: Omit<SupplierPayment, 'id' | 'createdAt'> & { createdAt?: string }) => void;
+  deleteSupplierPayment: (id: string) => void;
 }
 
 let channel: RealtimeChannel | null = null;
@@ -114,7 +142,7 @@ export const useStore = create<StoreState>((set, get) => {
   };
 
   return {
-    products: [], customers: [], sales: [], duePayments: [], expenses: [], _loaded: false,
+    products: [], customers: [], sales: [], duePayments: [], expenses: [], suppliers: [], purchases: [], supplierPayments: [], _loaded: false,
 
     refresh: async (keys = Object.keys(TABLES) as Key[]) => {
       try {
@@ -150,7 +178,7 @@ export const useStore = create<StoreState>((set, get) => {
     stop: () => {
       if (channel) { void supabase.removeChannel(channel); channel = null; }
       if (onVisible) { document.removeEventListener('visibilitychange', onVisible); onVisible = null; }
-      set({ products: [], customers: [], sales: [], duePayments: [], expenses: [], _loaded: false });
+      set({ products: [], customers: [], sales: [], duePayments: [], expenses: [], suppliers: [], purchases: [], supplierPayments: [], _loaded: false });
     },
 
     /* ---- products ---- */
@@ -227,7 +255,7 @@ export const useStore = create<StoreState>((set, get) => {
 
     /* ---- due payments ---- */
     addDuePayment: data => {
-      const payment: DuePayment = { ...data, id: uid(), createdAt: new Date().toISOString() };
+      const payment: DuePayment = { ...data, id: uid(), createdAt: data.createdAt || new Date().toISOString() };
       set({ duePayments: [...get().duePayments, payment] });
       void persist(
         supabase.from('due_payments').insert({
@@ -236,6 +264,11 @@ export const useStore = create<StoreState>((set, get) => {
         }),
         ['duePayments'],
       );
+    },
+
+    deleteDuePayment: id => {
+      set({ duePayments: get().duePayments.filter(p => p.id !== id) });
+      void persist(supabase.from('due_payments').delete().eq('id', id), ['duePayments']);
     },
 
     /* ---- expenses ---- */
@@ -253,6 +286,68 @@ export const useStore = create<StoreState>((set, get) => {
     deleteExpense: id => {
       set({ expenses: get().expenses.filter(e => e.id !== id) });
       void persist(supabase.from('expenses').delete().eq('id', id), ['expenses']);
+    },
+
+    /* ---- suppliers ---- */
+    addSupplier: data => {
+      const supplier: Supplier = { ...data, id: uid(), createdAt: new Date().toISOString() };
+      set({ suppliers: [...get().suppliers, supplier] });
+      void persist(
+        supabase.from('suppliers').insert({
+          id: supplier.id, name: supplier.name, phone: supplier.phone, address: supplier.address, created_at: supplier.createdAt,
+        }),
+        ['suppliers'],
+      );
+    },
+    deleteSupplier: id => {
+      set({ suppliers: get().suppliers.filter(s => s.id !== id) });
+      void persist(supabase.from('suppliers').delete().eq('id', id), ['suppliers']);
+    },
+
+    /* ---- buying goods (stock goes up inside the database) ---- */
+    addPurchase: data => {
+      const purchase: Purchase = { ...data, id: uid(), createdAt: data.createdAt || new Date().toISOString() };
+      const products = get().products.map(p => {
+        const item = purchase.items.find(i => i.productId === p.id);
+        if (!item) return p;
+        return { ...p, stock: p.stock + item.quantity, costPrice: item.unitCost > 0 ? item.unitCost : p.costPrice };
+      });
+      set({ purchases: [...get().purchases, purchase], products });
+      void persist(
+        supabase.rpc('create_purchase', {
+          p_id: purchase.id, p_supplier_id: purchase.supplierId, p_supplier_name: purchase.supplierName,
+          p_note: purchase.note, p_items: purchase.items, p_total: purchase.total, p_paid: purchase.paid,
+          p_created_at: purchase.createdAt,
+        }),
+        ['purchases', 'products'],
+      );
+    },
+    deletePurchase: id => {
+      const purchase = get().purchases.find(p => p.id === id);
+      if (!purchase) return;
+      const products = get().products.map(p => {
+        const item = purchase.items.find(i => i.productId === p.id);
+        return item ? { ...p, stock: Math.max(0, p.stock - item.quantity) } : p;
+      });
+      set({ purchases: get().purchases.filter(p => p.id !== id), products });
+      void persist(supabase.rpc('delete_purchase', { p_id: id }), ['purchases', 'products']);
+    },
+
+    /* ---- payments to suppliers ---- */
+    addSupplierPayment: data => {
+      const payment: SupplierPayment = { ...data, id: uid(), createdAt: data.createdAt || new Date().toISOString() };
+      set({ supplierPayments: [...get().supplierPayments, payment] });
+      void persist(
+        supabase.from('supplier_payments').insert({
+          id: payment.id, supplier_id: payment.supplierId, supplier_name: payment.supplierName,
+          amount: payment.amount, note: payment.note, created_at: payment.createdAt,
+        }),
+        ['supplierPayments'],
+      );
+    },
+    deleteSupplierPayment: id => {
+      set({ supplierPayments: get().supplierPayments.filter(p => p.id !== id) });
+      void persist(supabase.from('supplier_payments').delete().eq('id', id), ['supplierPayments']);
     },
   };
 });

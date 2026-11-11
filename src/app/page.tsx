@@ -28,261 +28,46 @@ import { Toaster } from '@/components/ui/toaster';
 import {
   ShoppingCart, Package, TrendingUp, Plus, Minus, Trash2, Pencil, Search, CreditCard,
   Wallet, Receipt, AlertCircle, X, Scale, Home as HomeIcon, Users, BarChart3, Phone,
-  Banknote, LogOut, type LucideIcon,
+  Banknote, LogOut, Truck, type LucideIcon,
 } from 'lucide-react';
 import {
   BarChart as RechartsBar, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, AreaChart, Area, Legend,
 } from 'recharts';
 
-/* ------------------------------------------------------------------ */
-/* Helpers                                                             */
-/* ------------------------------------------------------------------ */
-
-const PERIOD_BN = { daily: 'দৈনিক', weekly: 'সাপ্তাহিক', monthly: 'মাসিক', yearly: 'বার্ষিক' } as const;
-const COLORS = ['#1d4ed8', '#0d9488', '#d97706', '#dc2626', '#64748b', '#0891b2'];
-const LOW_STOCK = 5;
-
-// Dates: Bangla month/day names, but normal 0-9 digits (same as the numbers everywhere else)
-const fmt = (d: Date | number, pattern: string) =>
-  dfFormat(d, pattern, { locale: bn }).replace(/[০-৯]/g, c => String('০১২৩৪৫৬৭৮৯'.indexOf(c)));
-
-const DEFAULT_CATEGORY = 'সাধারণ';
-const catOf = (c?: string | null) => (!c || c === 'General' ? DEFAULT_CATEGORY : c);
-const unitBn = (u?: string) => (u === 'kg' ? 'কেজি' : u === 'pcs' ? 'পিস' : u ?? '');
-
-// Bangladeshi Taka, with thousand separators, no useless ".00"
-const formatCurrency = (amount: number) =>
-  `৳${amount.toLocaleString('en-BD', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
-
-// Mobile: the sheet hugs the TOP of the visible area and shrinks when the keyboard opens,
-// so the form and its buttons never hide behind the keyboard.
-const SHEET =
-  'bg-white p-4 sm:p-6 sm:max-h-[90dvh] overflow-y-auto overscroll-contain ' +
-  'max-sm:top-[calc(var(--vvt,0px)+8px)] max-sm:bottom-auto max-sm:left-2 max-sm:right-2 ' +
-  'max-sm:w-auto max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 ' +
-  'max-sm:max-h-[calc(var(--vvh,100dvh)-16px)] max-sm:rounded-2xl max-sm:pb-3';
-
-const PRIMARY_BTN = 'bg-blue-700 text-white hover:bg-blue-800';
-
-type Range = 'all' | 'today' | 'week' | 'month';
-const RANGES: { id: Range; label: string }[] = [
-  { id: 'all', label: 'সব' },
-  { id: 'today', label: 'আজ' },
-  { id: 'week', label: 'সপ্তাহ' },
-  { id: 'month', label: 'মাস' },
-];
-
-function inRange(iso: string, range: Range) {
-  if (range === 'all') return true;
-  const now = new Date();
-  const d = new Date(iso);
-  const [start, end] =
-    range === 'today' ? [startOfDay(now), endOfDay(now)]
-    : range === 'week' ? [startOfWeek(now), endOfWeek(now)]
-    : [startOfMonth(now), endOfMonth(now)];
-  return isWithinInterval(d, { start, end });
-}
-
-const byNewest = <T extends { createdAt: string }>(a: T, b: T) =>
-  new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-
-const getCategories = (products: Product[]) =>
-  Array.from(new Set(products.map(p => catOf(p.category)))).sort((a, b) => a.localeCompare(b));
-
-// Reuse an existing category if the same name is typed again (any letter case)
-const normalizeCategory = (value: string, existing: string[]) => {
-  const v = value.trim();
-  if (!v) return DEFAULT_CATEGORY;
-  return existing.find(c => c.toLowerCase() === v.toLowerCase()) ?? v;
-};
-
-const saleSummary = (sale: Sale) =>
-  sale.items
-    .map(i => `${i.productName} ${i.pricingType === 'weight' ? `${i.weight ?? i.quantity} কেজি` : `×${i.quantity}`}`)
-    .join(', ');
-
-// Customer dues, calculated once
-function useCustomerDues() {
-  const customers = useStore(s => s.customers);
-  const sales = useStore(s => s.sales);
-  const duePayments = useStore(s => s.duePayments);
-  return useMemo(() => {
-    const map: Record<string, number> = {};
-    customers.forEach(c => { map[c.id] = 0; });
-    sales.forEach(s => {
-      if (s.paymentType === 'due' && s.customerId && s.customerId in map) map[s.customerId] += s.total;
-    });
-    duePayments.forEach(p => {
-      if (p.customerId in map) map[p.customerId] -= p.amount;
-    });
-    const total = Object.values(map).reduce((sum, v) => sum + Math.max(0, v), 0);
-    return { map, total };
-  }, [customers, sales, duePayments]);
-}
-
-/* ------------------------------------------------------------------ */
-/* Small shared UI pieces                                              */
-/* ------------------------------------------------------------------ */
-
-// Keeps --vvh / --vvt in sync with the visible area (changes when the phone keyboard opens)
-function useVisualViewport() {
-  useEffect(() => {
-    const vv = window.visualViewport;
-    if (!vv) return;
-    const root = document.documentElement.style;
-    const sync = () => {
-      root.setProperty('--vvh', `${vv.height}px`);
-      root.setProperty('--vvt', `${vv.offsetTop}px`);
-    };
-    sync();
-    vv.addEventListener('resize', sync);
-    vv.addEventListener('scroll', sync);
-    return () => {
-      vv.removeEventListener('resize', sync);
-      vv.removeEventListener('scroll', sync);
-      root.removeProperty('--vvh');
-      root.removeProperty('--vvt');
-    };
-  }, []);
-}
-
-// Buttons stay visible at the bottom of the form, right above the keyboard
-function FormActions({ onCancel, label, submitClass = PRIMARY_BTN }: { onCancel: () => void; label: string; submitClass?: string }) {
-  return (
-    <div className="sticky bottom-0 -mx-4 flex gap-2 border-t bg-white px-4 pb-0.5 pt-3 sm:mx-0 sm:border-0 sm:px-0 sm:pt-1">
-      <Button type="button" variant="outline" className="h-11 flex-1" onClick={onCancel}>বাতিল</Button>
-      <Button type="submit" className={`h-11 flex-1 ${submitClass}`}>{label}</Button>
-    </div>
-  );
-}
-
-function EmptyState({ icon: Icon, text, action }: { icon: LucideIcon; text: string; action?: React.ReactNode }) {
-  return (
-    <div className="flex flex-col items-center gap-2 py-10 text-center text-slate-500">
-      <Icon className="h-8 w-8 text-slate-300" />
-      <p className="text-sm">{text}</p>
-      {action}
-    </div>
-  );
-}
-
-function RangeTabs({ value, onChange }: { value: Range; onChange: (r: Range) => void }) {
-  return (
-    <div className="grid grid-cols-4 gap-1 rounded-lg bg-slate-100 p-1 sm:w-72" role="tablist">
-      {RANGES.map(r => (
-        <button
-          key={r.id}
-          role="tab"
-          aria-selected={value === r.id}
-          onClick={() => onChange(r.id)}
-          className={`h-8 rounded-md text-xs font-medium transition-colors ${
-            value === r.id ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600'
-          }`}
-        >
-          {r.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function PaymentBadge({ type }: { type: 'cash' | 'due' }) {
-  return (
-    <Badge variant={type === 'cash' ? 'default' : 'secondary'} className="text-[10px] px-1.5 py-0 capitalize">
-      {type === 'cash' ? 'নগদ' : 'বাকি'}
-    </Badge>
-  );
-}
-
-function ConfirmDialog({
-  open, title, description, onConfirm, onCancel,
-}: { open: boolean; title: string; description?: string; onConfirm: () => void; onCancel: () => void }) {
-  return (
-    <AlertDialog open={open} onOpenChange={o => { if (!o) onCancel(); }}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>{title}</AlertDialogTitle>
-          {description && <AlertDialogDescription>{description}</AlertDialogDescription>}
-        </AlertDialogHeader>
-        <AlertDialogFooter className="max-sm:flex-row max-sm:gap-2">
-          <AlertDialogCancel className="max-sm:flex-1 max-sm:mt-0">বাতিল</AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm} className="bg-red-500 hover:bg-red-600 max-sm:flex-1">মুছুন</AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  );
-}
-
-function SearchBar({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
-  return (
-    <div className="relative flex-1">
-      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-      <Input
-        type="search"
-        aria-label={placeholder}
-        placeholder={placeholder}
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        className="h-10 pl-9"
-      />
-    </div>
-  );
-}
-
-function CategoryChips({
-  categories, value, onChange, counts, allLabel = 'সব', className = '',
-}: {
-  categories: string[]; value: string; onChange: (c: string) => void;
-  counts?: Record<string, number>; allLabel?: string; className?: string;
-}) {
-  const chip = (active: boolean) =>
-    `h-8 shrink-0 rounded-full border px-3 text-xs font-medium transition-colors ${
-      active ? 'border-blue-700 bg-blue-700 text-white' : 'bg-white text-slate-700 active:bg-slate-100'
-    }`;
-  const total = counts ? Object.values(counts).reduce((a, b) => a + b, 0) : undefined;
-  return (
-    <div className={`flex gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none] ${className}`} role="tablist" aria-label="ক্যাটাগরি">
-      <button role="tab" aria-selected={value === ''} className={chip(value === '')} onClick={() => onChange('')}>
-        {allLabel}{total !== undefined && ` · ${total}`}
-      </button>
-      {categories.map(c => (
-        <button key={c} role="tab" aria-selected={value === c} className={chip(value === c)} onClick={() => onChange(c)}>
-          {c}{counts && ` · ${counts[c] ?? 0}`}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-const TONES = {
-  green: { card: 'border-slate-200 bg-white', icon: 'bg-emerald-50 text-emerald-600', value: 'text-slate-900' },
-  orange: { card: 'border-slate-200 bg-white', icon: 'bg-amber-50 text-amber-600', value: 'text-slate-900' },
-  red: { card: 'border-red-200 bg-red-50/60', icon: 'bg-red-100 text-red-600', value: 'text-red-700' },
-  gray: { card: 'border-slate-200 bg-white', icon: 'bg-slate-100 text-slate-400', value: 'text-slate-900' },
-  blue: { card: 'border-slate-200 bg-white', icon: 'bg-blue-50 text-blue-700', value: 'text-slate-900' },
-} as const;
-
-function StatCard({
-  label, value, sub, icon: Icon, tone, onClick,
-}: { label: string; value: string; sub: string; icon: LucideIcon; tone: keyof typeof TONES; onClick?: () => void }) {
-  const t = TONES[tone];
-  return (
-    <button
-      onClick={onClick}
-      className={`rounded-xl border p-3 text-left transition-colors active:bg-slate-100 sm:p-4 ${t.card}`}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-medium text-slate-600">{label}</span>
-        <span className={`flex h-7 w-7 items-center justify-center rounded-full ${t.icon}`}>
-          <Icon className="h-4 w-4" />
-        </span>
-      </div>
-      <div className={`mt-1 truncate text-lg font-bold sm:text-2xl ${t.value}`}>{value}</div>
-      <p className="truncate text-[11px] text-slate-500">{sub}</p>
-    </button>
-  );
-}
+import {
+  PERIOD_BN,
+  COLORS,
+  LOW_STOCK,
+  fmt,
+  DEFAULT_CATEGORY,
+  catOf,
+  unitBn,
+  formatCurrency,
+  SHEET,
+  PRIMARY_BTN,
+  Range,
+  RANGES,
+  inRange,
+  byNewest,
+  getCategories,
+  normalizeCategory,
+  saleSummary,
+  useCustomerDues,
+  useVisualViewport,
+  FormActions,
+  EmptyState,
+  RangeTabs,
+  PaymentBadge,
+  ConfirmDialog,
+  SearchBar,
+  CategoryChips,
+  TONES,
+  StatCard,
+  itemProfit, profitOf, useSupplierDues, todayStr, dateStrToIso, DateField, buildLedger, Ledger,
+} from '@/components/shared';
+import { SupplierModule } from '@/components/suppliers';
+import { InstallBanner } from '@/components/pwa';
 
 /* ------------------------------------------------------------------ */
 /* Root                                                                */
@@ -293,6 +78,7 @@ const NAV: { id: string; label: string; icon: LucideIcon }[] = [
   { id: 'sales', label: 'বিক্রি', icon: ShoppingCart },
   { id: 'products', label: 'পণ্য', icon: Package },
   { id: 'customers', label: 'কাস্টমার', icon: Users },
+  { id: 'suppliers', label: 'সরবরাহ', icon: Truck },
   { id: 'expenses', label: 'খরচ', icon: Wallet },
   { id: 'reports', label: 'রিপোর্ট', icon: BarChart3 },
 ];
@@ -338,7 +124,7 @@ function Home() {
       <main className="mx-auto max-w-7xl px-3 pb-24 pt-3 sm:px-4 sm:pb-8 sm:pt-6">
         <Tabs value={activeTab} onValueChange={go}>
           {/* Desktop / tablet tabs */}
-          <TabsList className="mb-6 hidden w-full grid-cols-6 sm:grid">
+          <TabsList className="mb-6 hidden w-full grid-cols-7 sm:grid">
             {NAV.map(n => (
               <TabsTrigger key={n.id} value={n.id}>{n.label}</TabsTrigger>
             ))}
@@ -348,6 +134,7 @@ function Home() {
           <TabsContent value="sales"><SalesModule /></TabsContent>
           <TabsContent value="products"><ProductManagement /></TabsContent>
           <TabsContent value="customers"><CustomerManagement /></TabsContent>
+          <TabsContent value="suppliers"><SupplierModule /></TabsContent>
           <TabsContent value="expenses"><ExpenseTracking /></TabsContent>
           <TabsContent value="reports"><Reports /></TabsContent>
         </Tabs>
@@ -358,7 +145,7 @@ function Home() {
         aria-label="মেনু"
         className="fixed inset-x-0 bottom-0 z-40 border-t bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur sm:hidden"
       >
-        <div className="grid grid-cols-6">
+        <div className="grid grid-cols-7">
           {NAV.map(n => {
             const active = activeTab === n.id;
             const Icon = n.icon;
@@ -406,10 +193,12 @@ function Dashboard({ go }: { go: (tab: string) => void }) {
   const monthlyExpenses = expenses.filter(e => inRange(e.createdAt, 'month')).reduce((sum, e) => sum + e.amount, 0);
   const lowStockProducts = products.filter(p => p.stock <= LOW_STOCK);
   const recentSales = [...sales].sort(byNewest).slice(0, 5);
-  const profit = monthlyRevenue - monthlyExpenses;
+  const monthProfit = profitOf(sales.filter(s => inRange(s.createdAt, 'month')));
+  const profit = monthProfit.profit - monthlyExpenses;
 
   return (
     <div className="space-y-3 sm:space-y-6">
+      <InstallBanner />
       <div className="grid grid-cols-2 gap-2 sm:gap-4 lg:grid-cols-4">
         <StatCard label="আজকের বিক্রি" value={formatCurrency(todayRevenue)} sub={`${todaySales.length}টি লেনদেন`}
           icon={Banknote} tone="green" onClick={() => go('sales')} />
@@ -417,8 +206,9 @@ function Dashboard({ go }: { go: (tab: string) => void }) {
           icon={CreditCard} tone="orange" onClick={() => go('customers')} />
         <StatCard label="কম স্টক" value={String(lowStockProducts.length)} sub="মাল তুলতে হবে"
           icon={AlertCircle} tone={lowStockProducts.length > 0 ? 'red' : 'gray'} onClick={() => go('products')} />
-        <StatCard label="এই মাসের লাভ" value={formatCurrency(profit)} sub={`বিক্রি ${formatCurrency(monthlyRevenue)}`}
-          icon={TrendingUp} tone={profit >= 0 ? 'blue' : 'red'} onClick={() => go('reports')} />
+        <StatCard label="এই মাসের লাভ" value={monthProfit.known === 0 && monthProfit.unknown > 0 ? '—' : formatCurrency(profit)}
+          sub={monthProfit.unknown > 0 ? `${monthProfit.unknown}টি আইটেমে কেনা দাম নেই` : `বিক্রি ${formatCurrency(monthlyRevenue)}`}
+          icon={TrendingUp} tone={profit >= 0 || monthProfit.known === 0 ? 'blue' : 'red'} onClick={() => go('reports')} />
       </div>
 
       <div className="grid grid-cols-3 gap-2 sm:gap-4">
@@ -641,6 +431,7 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
       quantity: newQty,
       weight: isWeight ? newQty : undefined,
       price: selected.price,
+      costPrice: selected.costPrice ?? 0,
       subtotal: Math.round(newQty * selected.price * 100) / 100,
       pricingType: isWeight ? 'weight' : 'fixed',
       unit: isWeight ? 'kg' : 'pcs',
@@ -826,14 +617,14 @@ function ProductFormDialog({
   const products = useStore(s => s.products);
   const addProduct = useStore(s => s.addProduct);
   const updateProduct = useStore(s => s.updateProduct);
-  const empty = { name: '', price: '', stock: '', category: '', pricingType: 'fixed' as 'fixed' | 'weight' };
+  const empty = { name: '', price: '', costPrice: '', stock: '', category: '', pricingType: 'fixed' as 'fixed' | 'weight' };
   const [form, setForm] = useState(empty);
 
   useEffect(() => {
     if (!open) return;
     setForm(product
       ? {
-        name: product.name, price: String(product.price), stock: String(product.stock),
+        name: product.name, price: String(product.price), costPrice: product.costPrice ? String(product.costPrice) : '', stock: String(product.stock),
         category: product.category || '', pricingType: product.pricingType || 'fixed',
       }
       : { ...empty, category: defaultCategory || '' });
@@ -845,12 +636,13 @@ function ProductFormDialog({
   const submit = () => {
     const price = Number(form.price);
     const stock = Number(form.stock);
-    if (!form.name.trim() || form.price === '' || form.stock === '' || !(price >= 0) || !(stock >= 0)) {
+    const costPrice = Number(form.costPrice || 0);
+    if (!form.name.trim() || form.price === '' || form.stock === '' || !(price >= 0) || !(stock >= 0) || !(costPrice >= 0)) {
       toast({ title: 'ফর্মটি দেখুন', description: 'নাম, দাম ও স্টক দিতে হবে', variant: 'destructive' });
       return;
     }
     const data = {
-      name: form.name.trim(), price, stock,
+      name: form.name.trim(), price, costPrice, stock,
       category: normalizeCategory(form.category, categories),
       pricingType: form.pricingType,
       unit: form.pricingType === 'weight' ? 'kg' : 'pcs',
@@ -866,6 +658,7 @@ function ProductFormDialog({
   };
 
   const isWeight = form.pricingType === 'weight';
+  const margin = Number(form.price) > 0 && Number(form.costPrice) > 0 ? Number(form.price) - Number(form.costPrice) : null;
 
   return (
     <Dialog open={open} onOpenChange={o => { if (!o) onClose(); }}>
@@ -888,15 +681,26 @@ function ProductFormDialog({
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor="p-price">দাম {isWeight ? '(প্রতি কেজি)' : ''} *</Label>
+              <Label htmlFor="p-cost">কেনা দাম {isWeight ? '(প্রতি কেজি)' : ''}</Label>
+              <Input id="p-cost" inputMode="decimal" className="h-11" value={form.costPrice}
+                onChange={e => setForm({ ...form, costPrice: e.target.value })} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="p-price">বিক্রির দাম {isWeight ? '(প্রতি কেজি)' : ''} *</Label>
               <Input id="p-price" inputMode="decimal" className="h-11" value={form.price}
                 onChange={e => setForm({ ...form, price: e.target.value })} />
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="p-stock">স্টক {isWeight ? '(কেজি)' : '(পিস)'} *</Label>
-              <Input id="p-stock" inputMode="decimal" className="h-11" value={form.stock}
-                onChange={e => setForm({ ...form, stock: e.target.value })} />
-            </div>
+          </div>
+          {margin !== null && (
+            <p className={`-mt-1 text-xs font-medium ${margin >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+              {margin >= 0 ? 'লাভ' : 'লোকসান'} {formatCurrency(Math.abs(margin))} প্রতি {isWeight ? 'কেজি' : 'পিস'}
+              {' '}({Math.round((Math.abs(margin) / Number(form.price)) * 100)}%)
+            </p>
+          )}
+          <div className="space-y-1.5">
+            <Label htmlFor="p-stock">স্টক {isWeight ? '(কেজি)' : '(পিস)'} *</Label>
+            <Input id="p-stock" inputMode="decimal" className="h-11" value={form.stock}
+              onChange={e => setForm({ ...form, stock: e.target.value })} />
           </div>
 
           <div className="space-y-1.5">
@@ -984,7 +788,12 @@ function ProductManagement() {
                           {p.pricingType === 'weight' && <Scale className="h-3.5 w-3.5 shrink-0 text-blue-600" />}
                           <span className="truncate">{p.name}</span>
                         </p>
-                        <p className="text-[11px] text-slate-500">{catOf(p.category)}</p>
+                        <p className="text-[11px] text-slate-500">
+                          {catOf(p.category)}
+                          {(p.costPrice ?? 0) > 0
+                            ? <span className={p.price >= (p.costPrice ?? 0) ? 'text-emerald-600' : 'text-red-600'}> · লাভ {formatCurrency(p.price - (p.costPrice ?? 0))}</span>
+                            : <span className="text-amber-600"> · কেনা দাম দিন</span>}
+                        </p>
                       </div>
                       <div className="text-right">
                         <p className="text-sm font-semibold">{formatCurrency(p.price)}{p.pricingType === 'weight' && <span className="text-[10px] font-normal text-slate-400">/কেজি</span>}</p>
@@ -1006,7 +815,7 @@ function ProductManagement() {
                   <TableHeader>
                     <TableRow className="bg-slate-50">
                       <TableHead>নাম</TableHead><TableHead>ধরন</TableHead>
-                      <TableHead className="text-right">দাম</TableHead><TableHead className="text-right">স্টক</TableHead>
+                      <TableHead className="text-right">কেনা দাম</TableHead><TableHead className="text-right">বিক্রির দাম</TableHead><TableHead className="text-right">লাভ</TableHead><TableHead className="text-right">স্টক</TableHead>
                       <TableHead>ক্যাটাগরি</TableHead><TableHead className="text-right">কাজ</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -1019,7 +828,9 @@ function ProductManagement() {
                           </span>
                         </TableCell>
                         <TableCell><Badge variant={p.pricingType === 'weight' ? 'default' : 'secondary'}>{p.pricingType === 'weight' ? 'কেজি দরে' : 'পিস দরে'}</Badge></TableCell>
+                        <TableCell className="text-right text-slate-500">{(p.costPrice ?? 0) > 0 ? formatCurrency(p.costPrice ?? 0) : '—'}</TableCell>
                         <TableCell className="text-right">{formatCurrency(p.price)}{p.pricingType === 'weight' && <span className="text-xs text-slate-400">/কেজি</span>}</TableCell>
+                        <TableCell className={`text-right ${p.price >= (p.costPrice ?? 0) ? 'text-emerald-600' : 'text-red-600'}`}>{(p.costPrice ?? 0) > 0 ? formatCurrency(p.price - (p.costPrice ?? 0)) : '—'}</TableCell>
                         <TableCell className={`text-right ${p.stock <= LOW_STOCK ? 'font-semibold text-red-600' : ''}`}>{p.stock} {unitBn(p.unit)}</TableCell>
                         <TableCell><Badge variant="outline">{p.category || '-'}</Badge></TableCell>
                         <TableCell className="text-right">
@@ -1059,6 +870,8 @@ function CustomerManagement() {
   const addCustomer = useStore(s => s.addCustomer);
   const deleteCustomer = useStore(s => s.deleteCustomer);
   const addDuePayment = useStore(s => s.addDuePayment);
+  const deleteDuePayment = useStore(s => s.deleteDuePayment);
+  const duePayments = useStore(s => s.duePayments);
   const { map: dues } = useCustomerDues();
 
   const [search, setSearch] = useState('');
@@ -1068,6 +881,33 @@ function CustomerManagement() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [form, setForm] = useState({ name: '', phone: '', address: '' });
   const [payAmount, setPayAmount] = useState('');
+  const [payDate, setPayDate] = useState(todayStr());
+  const [deletePayId, setDeletePayId] = useState<string | null>(null);
+
+  // latest payment of every customer (shown on the card)
+  const lastPay = useMemo(() => {
+    const m: Record<string, { createdAt: string; amount: number }> = {};
+    duePayments.forEach(p => {
+      if (!m[p.customerId] || new Date(p.createdAt) > new Date(m[p.customerId].createdAt)) m[p.customerId] = p;
+    });
+    return m;
+  }, [duePayments]);
+
+  // full khata of the open customer: due purchases and payments with the balance after each
+  const ledger = useMemo(() => {
+    if (!detailsId) return [];
+    return buildLedger([
+      ...sales.filter(s => s.customerId === detailsId && s.paymentType === 'due').map(s => ({
+        id: s.id, date: s.createdAt, kind: 'charge' as const, amount: s.total, title: 'বাকিতে কেনা', sub: saleSummary(s),
+      })),
+      ...duePayments.filter(p => p.customerId === detailsId).map(p => ({
+        id: p.id, date: p.createdAt, kind: 'payment' as const, amount: p.amount, title: 'বাকি পরিশোধ',
+        onDelete: () => setDeletePayId(p.id),
+      })),
+    ]);
+  }, [detailsId, sales, duePayments]);
+  const chargedTotal = ledger.filter(l => l.kind === 'charge').reduce((a, l) => a + l.amount, 0);
+  const paidTotal = ledger.filter(l => l.kind === 'payment').reduce((a, l) => a + l.amount, 0);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -1099,7 +939,7 @@ function CustomerManagement() {
       toast({ title: 'পরিমাণ বেশি', description: `বর্তমান বাকি ${formatCurrency(payDue)}`, variant: 'destructive' });
       return;
     }
-    addDuePayment({ customerId: payCustomer.id, customerName: payCustomer.name, amount });
+    addDuePayment({ customerId: payCustomer.id, customerName: payCustomer.name, amount, createdAt: dateStrToIso(payDate) });
     toast({ title: 'পেমেন্ট জমা হয়েছে', description: formatCurrency(amount) });
     setPayId(null);
     setPayAmount('');
@@ -1129,6 +969,11 @@ function CustomerManagement() {
                       </a>
                     )}
                     {c.address && <p className="truncate text-xs text-slate-400">{c.address}</p>}
+                    {lastPay[c.id] && (
+                      <p className="mt-0.5 text-[11px] text-emerald-700">
+                        সর্বশেষ পরিশোধ: {fmt(new Date(lastPay[c.id].createdAt), 'd MMM')} · {formatCurrency(lastPay[c.id].amount)}
+                      </p>
+                    )}
                   </div>
                   <Badge variant={due > 0 ? 'destructive' : 'secondary'} className="shrink-0 text-[10px]">
                     {due > 0 ? `বাকি ${formatCurrency(due)}` : 'বাকি নেই'}
@@ -1138,7 +983,7 @@ function CustomerManagement() {
                   <Button variant="outline" className="h-9 flex-1 text-xs" onClick={() => setDetailsId(c.id)}>বিস্তারিত</Button>
                   {due > 0 && (
                     <Button className="h-9 bg-emerald-600 text-xs text-white hover:bg-emerald-700"
-                      onClick={() => { setPayId(c.id); setPayAmount(''); }}>পরিশোধ</Button>
+                      onClick={() => { setPayId(c.id); setPayAmount(''); setPayDate(todayStr()); }}>পরিশোধ</Button>
                   )}
                   <Button variant="ghost" size="icon" className="h-9 w-9" aria-label={`মুছুন ${c.name}`} onClick={() => setDeleteId(c.id)}>
                     <Trash2 className="h-4 w-4 text-red-500" />
@@ -1172,27 +1017,25 @@ function CustomerManagement() {
           <DialogHeader><DialogTitle>{detailsCustomer?.name}</DialogTitle></DialogHeader>
           {detailsCustomer && (
             <div className="space-y-3">
-              <div className="grid grid-cols-3 gap-2 rounded-lg bg-slate-50 p-3 text-xs">
-                <div><p className="text-slate-500">ফোন</p><p className="truncate font-medium">{detailsCustomer.phone || '-'}</p></div>
-                <div><p className="text-slate-500">ঠিকানা</p><p className="truncate font-medium">{detailsCustomer.address || '-'}</p></div>
-                <div><p className="text-slate-500">বাকি</p><p className="font-semibold text-red-600">{formatCurrency(Math.max(0, dues[detailsCustomer.id] ?? 0))}</p></div>
-              </div>
-              <p className="text-xs font-medium text-slate-500">কেনার ইতিহাস</p>
-              <ul className="max-h-64 divide-y overflow-y-auto rounded-lg border">
-                {sales.filter(s => s.customerId === detailsCustomer.id).sort(byNewest).map(s => (
-                  <li key={s.id} className="flex items-center gap-2 px-3 py-2">
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-xs font-medium">{saleSummary(s)}</p>
-                      <p className="text-[11px] text-slate-500">{fmt(new Date(s.createdAt), 'MMM d, yyyy')}</p>
-                    </div>
-                    <PaymentBadge type={s.paymentType} />
-                    <span className="text-xs font-semibold">{formatCurrency(s.total)}</span>
-                  </li>
-                ))}
-                {sales.every(s => s.customerId !== detailsCustomer.id) && (
-                  <li className="p-4 text-center text-xs text-slate-500">এখনো কেনাকাটা নেই</li>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
+                {detailsCustomer.phone && (
+                  <a href={`tel:${detailsCustomer.phone}`} className="inline-flex items-center gap-1"><Phone className="h-3 w-3" />{detailsCustomer.phone}</a>
                 )}
-              </ul>
+                {detailsCustomer.address && <span>{detailsCustomer.address}</span>}
+              </div>
+              <div className="grid grid-cols-3 gap-2 rounded-lg bg-slate-50 p-3 text-xs">
+                <div><p className="text-slate-500">বাকিতে কেনা</p><p className="font-semibold">{formatCurrency(chargedTotal)}</p></div>
+                <div><p className="text-slate-500">পরিশোধ</p><p className="font-semibold text-emerald-600">{formatCurrency(paidTotal)}</p></div>
+                <div><p className="text-slate-500">এখনকার বাকি</p><p className="font-semibold text-red-600">{formatCurrency(Math.max(0, dues[detailsCustomer.id] ?? 0))}</p></div>
+              </div>
+              {(dues[detailsCustomer.id] ?? 0) > 0 && (
+                <Button className="h-10 w-full bg-emerald-600 text-white hover:bg-emerald-700"
+                  onClick={() => { const id = detailsCustomer.id; setDetailsId(null); setPayId(id); setPayAmount(''); setPayDate(todayStr()); }}>
+                  বাকি পরিশোধ নিন
+                </Button>
+              )}
+              <p className="text-xs font-medium text-slate-500">বাকির খাতা (কবে কী হয়েছে)</p>
+              <Ledger entries={ledger} emptyText="এখনো কোনো বাকির লেনদেন নেই" />
             </div>
           )}
         </DialogContent>
@@ -1211,11 +1054,20 @@ function CustomerManagement() {
                 <Button type="button" variant="outline" className="h-11 shrink-0" onClick={() => setPayAmount(String(payDue))}>পুরো</Button>
               </div>
             </div>
+            <DateField id="pay-date" value={payDate} onChange={setPayDate} label="কোন তারিখে পেয়েছেন" />
             <FormActions onCancel={() => setPayId(null)} label="জমা করুন" submitClass="bg-emerald-600 text-white hover:bg-emerald-700" />
           </form>
         </DialogContent>
       </Dialog>
 
+      <ConfirmDialog
+        open={!!deletePayId} title="এই পরিশোধ মুছবেন?" description="কাস্টমারের বাকি আবার বেড়ে যাবে।"
+        onCancel={() => setDeletePayId(null)}
+        onConfirm={() => {
+          if (deletePayId) { deleteDuePayment(deletePayId); toast({ title: 'পরিশোধ মুছে ফেলা হয়েছে' }); }
+          setDeletePayId(null);
+        }}
+      />
       <ConfirmDialog
         open={!!deleteId} title="কাস্টমার মুছবেন?" description="বিক্রির ইতিহাস থেকে যাবে।"
         onCancel={() => setDeleteId(null)}
@@ -1232,7 +1084,7 @@ function CustomerManagement() {
 /* Expenses                                                            */
 /* ------------------------------------------------------------------ */
 
-const EXPENSE_CATEGORIES = ['ভাড়া', 'ইউটিলিটি বিল', 'বেতন', 'যাতায়াত', 'মাল কেনা', 'অন্যান্য'];
+const EXPENSE_CATEGORIES = ['ভাড়া', 'ইউটিলিটি বিল', 'বেতন', 'যাতায়াত', 'মেরামত', 'অন্যান্য'];
 
 function ExpenseFormDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const addExpense = useStore(s => s.addExpense);
@@ -1372,6 +1224,7 @@ function Reports() {
   const sales = useStore(s => s.sales);
   const expenses = useStore(s => s.expenses);
   const { total: totalDue } = useCustomerDues();
+  const { total: supplierDue } = useSupplierDues();
   const [period, setPeriod] = useState<'daily' | 'weekly' | 'monthly' | 'yearly'>('monthly');
 
   const sumIn = <T extends { createdAt: string }>(list: T[], pick: (x: T) => number, start: Date, end: Date) =>
@@ -1419,6 +1272,17 @@ function Reports() {
     return Object.values(map).sort((a, b) => b.revenue - a.revenue).slice(0, 5);
   }, [sales]);
 
+  const topProfit = useMemo(() => {
+    const map: Record<string, { name: string; profit: number }> = {};
+    sales.forEach(sale => sale.items.forEach(i => {
+      const p = itemProfit(i);
+      if (p === null) return;
+      map[i.productId] ??= { name: i.productName, profit: 0 };
+      map[i.productId].profit += p;
+    }));
+    return Object.values(map).sort((a, b) => b.profit - a.profit).slice(0, 5);
+  }, [sales]);
+
   const expenseByCategory = useMemo(() => {
     const map: Record<string, number> = {};
     expenses.forEach(e => { const c = catOf(e.category); map[c] = (map[c] || 0) + e.amount; });
@@ -1427,7 +1291,8 @@ function Reports() {
 
   const totalRevenue = sales.reduce((s, x) => s + x.total, 0);
   const totalExpenses = expenses.reduce((s, x) => s + x.amount, 0);
-  const net = totalRevenue - totalExpenses;
+  const gross = profitOf(sales);
+  const net = gross.profit - totalExpenses;
   const fmtTip = (v: unknown) => formatCurrency(Number(v));
 
   return (
@@ -1441,11 +1306,15 @@ function Reports() {
         ))}
       </div>
 
-      <div className="grid grid-cols-2 gap-2 sm:gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 sm:gap-4 lg:grid-cols-3">
         <StatCard label="বিক্রি" value={formatCurrency(totalRevenue)} sub="সর্বমোট" icon={Banknote} tone="green" />
-        <StatCard label="খরচ" value={formatCurrency(totalExpenses)} sub="সর্বমোট" icon={Receipt} tone="red" />
-        <StatCard label="নিট লাভ" value={formatCurrency(net)} sub="বিক্রি − খরচ" icon={TrendingUp} tone={net >= 0 ? 'blue' : 'red'} />
-        <StatCard label="বাকি" value={formatCurrency(totalDue)} sub="অনাদায়ী" icon={CreditCard} tone="orange" />
+        <StatCard label="মোট লাভ" value={gross.known === 0 && gross.unknown > 0 ? '—' : formatCurrency(gross.profit)}
+          sub={gross.unknown > 0 ? `${gross.unknown}টি আইটেমে কেনা দাম নেই` : 'বিক্রি − কেনা দাম'} icon={TrendingUp} tone="blue" />
+        <StatCard label="খরচ" value={formatCurrency(totalExpenses)} sub="দোকানের খরচ" icon={Receipt} tone="red" />
+        <StatCard label="নিট লাভ" value={gross.known === 0 && gross.unknown > 0 ? '—' : formatCurrency(net)} sub="মোট লাভ − খরচ"
+          icon={TrendingUp} tone={net >= 0 || gross.known === 0 ? 'green' : 'red'} />
+        <StatCard label="কাস্টমারের বাকি" value={formatCurrency(totalDue)} sub="আপনি পাবেন" icon={CreditCard} tone="orange" />
+        <StatCard label="সরবরাহকারীর পাওনা" value={formatCurrency(supplierDue)} sub="আপনি দেবেন" icon={Truck} tone="orange" />
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:gap-6 lg:grid-cols-2">
@@ -1526,6 +1395,25 @@ function Reports() {
                     <YAxis dataKey="name" type="category" tick={{ fontSize: 10 }} width={72} />
                     <Tooltip formatter={fmtTip} />
                     <Bar dataKey="revenue" fill="#1d4ed8" name="বিক্রি" radius={[0, 4, 4, 0]} />
+                  </RechartsBar>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="gap-2 py-3 shadow-sm sm:py-6 lg:col-span-2">
+          <CardHeader className="px-3 sm:px-6"><CardTitle className="text-sm sm:text-base">সবচেয়ে বেশি লাভের পণ্য</CardTitle></CardHeader>
+          <CardContent className="px-1 sm:px-6">
+            {topProfit.length === 0 ? <EmptyState icon={TrendingUp} text="পণ্যে কেনা দাম দিলে এখানে লাভ দেখা যাবে" /> : (
+              <div className="h-48 sm:h-60">
+                <ResponsiveContainer width="100%" height="100%">
+                  <RechartsBar data={topProfit} layout="vertical" margin={{ left: 0, right: 12 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                    <XAxis type="number" tick={{ fontSize: 10 }} />
+                    <YAxis dataKey="name" type="category" tick={{ fontSize: 10 }} width={72} />
+                    <Tooltip formatter={fmtTip} />
+                    <Bar dataKey="profit" fill="#0d9488" name="লাভ" radius={[0, 4, 4, 0]} />
                   </RechartsBar>
                 </ResponsiveContainer>
               </div>

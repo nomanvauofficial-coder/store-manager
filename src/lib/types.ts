@@ -2,7 +2,8 @@
 export interface Product {
   id: string;
   name: string;
-  price: number; // Price per unit (per item or per kg)
+  price: number; // Selling price per unit (per item or per kg)
+  costPrice?: number; // Buying price per unit (0 / missing = not set)
   stock: number; // Stock in units or kg
   category: string;
   pricingType: 'fixed' | 'weight'; // Fixed price or weight-based
@@ -27,6 +28,7 @@ export interface SaleItem {
   quantity: number; // For fixed: number of items, For weight: number of kg
   weight?: number; // Weight in kg (for weight-based products)
   price: number; // Price per unit
+  costPrice?: number; // Buying price per unit at the time of sale
   subtotal: number;
   pricingType: 'fixed' | 'weight';
   unit: string;
@@ -49,6 +51,46 @@ export interface DuePayment {
   customerId: string;
   customerName: string;
   amount: number;
+  createdAt: string;
+}
+
+// Supplier (where you buy goods from)
+export interface Supplier {
+  id: string;
+  name: string;
+  phone: string;
+  address: string;
+  createdAt: string;
+}
+
+export interface PurchaseItem {
+  productId: string;
+  productName: string;
+  quantity: number;
+  unitCost: number;
+  subtotal: number;
+  unit: string;
+}
+
+// Buying goods from a supplier (total - paid = still owed to the supplier)
+export interface Purchase {
+  id: string;
+  supplierId: string;
+  supplierName: string;
+  note: string;
+  items: PurchaseItem[];
+  total: number;
+  paid: number;
+  createdAt: string;
+}
+
+// Money paid to a supplier later
+export interface SupplierPayment {
+  id: string;
+  supplierId: string;
+  supplierName: string;
+  amount: number;
+  note: string;
   createdAt: string;
 }
 
