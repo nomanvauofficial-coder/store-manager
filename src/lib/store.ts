@@ -4,7 +4,7 @@ import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 import { toast } from '@/hooks/use-toast';
 import {
-  Product, Customer, Sale, DuePayment, Expense, SaleItem, Supplier, Purchase, PurchaseItem, SupplierPayment,
+  Product, Customer, Sale, DuePayment, Expense, SaleItem, Supplier, Purchase, PurchaseItem, SupplierPayment, ShopInfo,
 } from './types';
 
 type Row = Record<string, any>;
@@ -53,6 +53,9 @@ const toSupplierPayment = (r: Row): SupplierPayment => ({
   id: r.id, supplierId: r.supplier_id, supplierName: r.supplier_name ?? '', amount: Number(r.amount),
   note: r.note ?? '', createdAt: r.created_at,
 });
+const toShop = (r: Row): ShopInfo => ({
+  name: r.name ?? '', phone: r.phone ?? '', address: r.address ?? '', note: r.note ?? '',
+});
 const toExpense = (r: Row): Expense => ({
   id: r.id, description: r.description, amount: Number(r.amount), category: r.category, createdAt: r.created_at,
 });
@@ -79,6 +82,7 @@ const TABLES = {
   suppliers: { table: 'suppliers', map: toSupplier },
   purchases: { table: 'purchases', map: toPurchase },
   supplierPayments: { table: 'supplier_payments', map: toSupplierPayment },
+  shopSettings: { table: 'shop_settings', map: toShop },
 } as const;
 type Key = keyof typeof TABLES;
 
@@ -91,6 +95,7 @@ interface StoreState {
   suppliers: Supplier[];
   purchases: Purchase[];
   supplierPayments: SupplierPayment[];
+  shopSettings: ShopInfo[]; // 0 or 1 row: the shop details for invoices
   _loaded: boolean;
 
   start: () => Promise<void>;
@@ -120,6 +125,8 @@ interface StoreState {
   deletePurchase: (id: string) => void;
   addSupplierPayment: (payment: Omit<SupplierPayment, 'id' | 'createdAt'> & { createdAt?: string }) => void;
   deleteSupplierPayment: (id: string) => void;
+
+  saveShop: (info: ShopInfo) => void;
 }
 
 let channel: RealtimeChannel | null = null;
@@ -142,7 +149,7 @@ export const useStore = create<StoreState>((set, get) => {
   };
 
   return {
-    products: [], customers: [], sales: [], duePayments: [], expenses: [], suppliers: [], purchases: [], supplierPayments: [], _loaded: false,
+    products: [], customers: [], sales: [], duePayments: [], expenses: [], suppliers: [], purchases: [], supplierPayments: [], shopSettings: [], _loaded: false,
 
     refresh: async (keys = Object.keys(TABLES) as Key[]) => {
       try {
@@ -178,7 +185,7 @@ export const useStore = create<StoreState>((set, get) => {
     stop: () => {
       if (channel) { void supabase.removeChannel(channel); channel = null; }
       if (onVisible) { document.removeEventListener('visibilitychange', onVisible); onVisible = null; }
-      set({ products: [], customers: [], sales: [], duePayments: [], expenses: [], suppliers: [], purchases: [], supplierPayments: [], _loaded: false });
+      set({ products: [], customers: [], sales: [], duePayments: [], expenses: [], suppliers: [], purchases: [], supplierPayments: [], shopSettings: [], _loaded: false });
     },
 
     /* ---- products ---- */
@@ -348,6 +355,18 @@ export const useStore = create<StoreState>((set, get) => {
     deleteSupplierPayment: id => {
       set({ supplierPayments: get().supplierPayments.filter(p => p.id !== id) });
       void persist(supabase.from('supplier_payments').delete().eq('id', id), ['supplierPayments']);
+    },
+
+    /* ---- shop details (printed on invoices) ---- */
+    saveShop: info => {
+      set({ shopSettings: [info] });
+      void persist(
+        supabase.from('shop_settings').upsert({
+          id: 'main', name: info.name, phone: info.phone, address: info.address, note: info.note,
+          updated_at: new Date().toISOString(),
+        }),
+        ['shopSettings'],
+      );
     },
   };
 });

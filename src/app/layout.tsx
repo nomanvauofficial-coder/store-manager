@@ -14,10 +14,10 @@ const inter = Inter({
   display: "swap",
 });
 
-// Bangla names and the ৳ sign
+// Main font: Bangla, ৳, digits and English all in Hind Siliguri so sizes match
 const bengali = Hind_Siliguri({
   variable: "--font-bengali",
-  subsets: ["bengali"],
+  subsets: ["bengali", "latin"],
   weight: ["400", "500", "600", "700"],
   display: "swap",
 });

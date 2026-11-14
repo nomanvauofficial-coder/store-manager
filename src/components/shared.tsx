@@ -28,7 +28,7 @@ import { Toaster } from '@/components/ui/toaster';
 import {
   ShoppingCart, Package, TrendingUp, Plus, Minus, Trash2, Pencil, Search, CreditCard,
   Wallet, Receipt, AlertCircle, X, Scale, Home as HomeIcon, Users, BarChart3, Phone,
-  Banknote, LogOut, type LucideIcon,
+  Banknote, LogOut, Printer, type LucideIcon,
 } from 'lucide-react';
 import {
   BarChart as RechartsBar, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -343,6 +343,22 @@ export function DateField({ id, value, onChange, label = 'তারিখ' }: { 
 }
 
 // ---- running-balance ledger (used for customers and suppliers) ----
+// One product line of a sale: what was sold, how much, and the price AT THAT TIME
+export interface InvoiceLine {
+  name: string;
+  qty: string; // e.g. "2 পিস" / "1.5 কেজি"
+  price: number; // price per unit when it was sold
+  subtotal: number;
+}
+
+export const saleLines = (sale: Sale): InvoiceLine[] =>
+  sale.items.map(i => ({
+    name: i.productName,
+    qty: `${i.quantity} ${i.pricingType === 'weight' ? 'কেজি' : 'পিস'}`,
+    price: i.price,
+    subtotal: i.subtotal,
+  }));
+
 export interface LedgerRow {
   id: string;
   date: string;
@@ -350,6 +366,8 @@ export interface LedgerRow {
   amount: number;
   title: string;
   sub?: string;
+  lines?: InvoiceLine[];
+  onInvoice?: (balanceAfter: number) => void;
   onDelete?: () => void;
 }
 
@@ -369,14 +387,32 @@ export function Ledger({ entries, emptyText }: { entries: (LedgerRow & { balance
   return (
     <ul className="max-h-[42dvh] divide-y overflow-y-auto rounded-lg border">
       {entries.map(e => (
-        <li key={e.id} className="flex items-center gap-2 px-3 py-2">
+        <li key={e.id} className="flex items-start gap-2 px-3 py-2">
           <div className="min-w-0 flex-1">
             <p className="flex items-center gap-1.5 text-xs font-medium">
               <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${e.kind === 'payment' ? 'bg-emerald-500' : 'bg-red-500'}`} />
               <span className="truncate">{e.title}</span>
             </p>
             {e.sub && <p className="truncate text-[11px] text-slate-500">{e.sub}</p>}
-            <p className="text-[11px] text-slate-400">{fmt(new Date(e.date), 'd MMM yyyy, h:mm a')}</p>
+            {e.lines && e.lines.length > 0 && (
+              <ul className="mt-1 space-y-0.5 rounded-md bg-slate-50 px-2 py-1.5">
+                {e.lines.map((l, idx) => (
+                  <li key={idx} className="flex items-baseline justify-between gap-2 text-[11px] text-slate-600">
+                    <span className="min-w-0 flex-1 truncate font-medium text-slate-700">{l.name}</span>
+                    <span className="shrink-0">{l.qty} × {formatCurrency(l.price)}</span>
+                    <span className="w-16 shrink-0 text-right font-semibold text-slate-800">{formatCurrency(l.subtotal)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="text-[11px] text-slate-400">
+              {fmt(new Date(e.date), 'd MMM yyyy, h:mm a')}
+              {e.onInvoice && (
+                <button type="button" onClick={() => e.onInvoice?.(e.balance)} className="ml-2 inline-flex items-center gap-0.5 font-medium text-blue-700">
+                  <Printer className="h-3 w-3" /> ইনভয়েস
+                </button>
+              )}
+            </p>
           </div>
           <div className="text-right">
             <p className={`text-sm font-semibold ${e.kind === 'payment' ? 'text-emerald-600' : 'text-red-600'}`}>

@@ -28,7 +28,7 @@ import { Toaster } from '@/components/ui/toaster';
 import {
   ShoppingCart, Package, TrendingUp, Plus, Minus, Trash2, Pencil, Search, CreditCard,
   Wallet, Receipt, AlertCircle, X, Scale, Home as HomeIcon, Users, BarChart3, Phone,
-  Banknote, LogOut, Truck, type LucideIcon,
+  Banknote, LogOut, Truck, Printer, type LucideIcon,
 } from 'lucide-react';
 import {
   BarChart as RechartsBar, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -64,8 +64,9 @@ import {
   CategoryChips,
   TONES,
   StatCard,
-  itemProfit, profitOf, useSupplierDues, todayStr, dateStrToIso, DateField, buildLedger, Ledger,
+  itemProfit, profitOf, useSupplierDues, todayStr, dateStrToIso, DateField, buildLedger, Ledger, saleLines,
 } from '@/components/shared';
+import { InvoiceDialog, buildSaleInvoice, buildStatement, customerBalanceAt, type InvoiceDoc } from '@/components/invoice';
 import { SupplierModule } from '@/components/suppliers';
 import { InstallBanner } from '@/components/pwa';
 
@@ -268,8 +269,8 @@ function Dashboard({ go }: { go: (tab: string) => void }) {
 
 // Compact list on mobile, table on desktop
 function SalesList({
-  sales, onDelete, emptyAction,
-}: { sales: Sale[]; onDelete?: (id: string) => void; emptyAction?: React.ReactNode }) {
+  sales, onDelete, onInvoice, emptyAction,
+}: { sales: Sale[]; onDelete?: (id: string) => void; onInvoice?: (sale: Sale) => void; emptyAction?: React.ReactNode }) {
   if (sales.length === 0) return <EmptyState icon={Receipt} text="এখনো কোনো বিক্রি নেই" action={emptyAction} />;
   return (
     <>
@@ -285,6 +286,11 @@ function SalesList({
               </p>
             </div>
             <span className="text-sm font-semibold text-emerald-600">{formatCurrency(sale.total)}</span>
+            {onInvoice && (
+              <Button variant="ghost" size="icon" className="h-10 w-10 shrink-0" aria-label="ইনভয়েস" onClick={() => onInvoice(sale)}>
+                <Printer className="h-4 w-4 text-blue-700" />
+              </Button>
+            )}
             {onDelete && (
               <Button variant="ghost" size="icon" className="h-10 w-10 shrink-0" aria-label="বিক্রি মুছুন" onClick={() => onDelete(sale.id)}>
                 <Trash2 className="h-4 w-4 text-red-500" />
@@ -303,7 +309,7 @@ function SalesList({
               <TableHead>পেমেন্ট</TableHead>
               <TableHead>কাস্টমার</TableHead>
               <TableHead className="text-right">মোট</TableHead>
-              {onDelete && <TableHead className="text-right">কাজ</TableHead>}
+              {(onDelete || onInvoice) && <TableHead className="text-right">কাজ</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -314,11 +320,18 @@ function SalesList({
                 <TableCell><PaymentBadge type={sale.paymentType} /></TableCell>
                 <TableCell className="text-xs">{sale.customerName || '-'}</TableCell>
                 <TableCell className="text-right text-xs font-medium text-emerald-600">{formatCurrency(sale.total)}</TableCell>
-                {onDelete && (
+                {(onDelete || onInvoice) && (
                   <TableCell className="text-right">
-                    <Button variant="ghost" size="icon" aria-label="বিক্রি মুছুন" onClick={() => onDelete(sale.id)}>
-                      <Trash2 className="h-4 w-4 text-red-500" />
-                    </Button>
+                    {onInvoice && (
+                      <Button variant="ghost" size="icon" aria-label="ইনভয়েস" onClick={() => onInvoice(sale)}>
+                        <Printer className="h-4 w-4 text-blue-700" />
+                      </Button>
+                    )}
+                    {onDelete && (
+                      <Button variant="ghost" size="icon" aria-label="বিক্রি মুছুন" onClick={() => onDelete(sale.id)}>
+                        <Trash2 className="h-4 w-4 text-red-500" />
+                      </Button>
+                    )}
                   </TableCell>
                 )}
               </TableRow>
@@ -332,7 +345,10 @@ function SalesList({
 
 function SalesModule() {
   const sales = useStore(s => s.sales);
+  const customers = useStore(s => s.customers);
+  const duePayments = useStore(s => s.duePayments);
   const deleteSale = useStore(s => s.deleteSale);
+  const [invoice, setInvoice] = useState<InvoiceDoc | null>(null);
   const [open, setOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [range, setRange] = useState<Range>('today');
@@ -356,11 +372,17 @@ function SalesModule() {
 
       <Card className="gap-0 overflow-hidden py-0 shadow-sm">
         <CardContent className="p-0">
-          <SalesList sales={filtered} onDelete={setDeleteId} />
+          <SalesList sales={filtered} onDelete={setDeleteId} onInvoice={sale => {
+            const customer = customers.find(c => c.id === sale.customerId);
+            const after = sale.paymentType === 'due' && sale.customerId
+              ? customerBalanceAt(sale.customerId, sale.createdAt, sales, duePayments) : undefined;
+            setInvoice(buildSaleInvoice(sale, customer, after));
+          }} />
         </CardContent>
       </Card>
 
       <NewSaleDialog open={open} onClose={() => setOpen(false)} />
+      <InvoiceDialog doc={invoice} onClose={() => setInvoice(null)} />
       <ConfirmDialog
         open={!!deleteId}
         title="বিক্রি মুছবেন?"
@@ -883,6 +905,7 @@ function CustomerManagement() {
   const [payAmount, setPayAmount] = useState('');
   const [payDate, setPayDate] = useState(todayStr());
   const [deletePayId, setDeletePayId] = useState<string | null>(null);
+  const [invoice, setInvoice] = useState<InvoiceDoc | null>(null);
 
   // latest payment of every customer (shown on the card)
   const lastPay = useMemo(() => {
@@ -898,14 +921,16 @@ function CustomerManagement() {
     if (!detailsId) return [];
     return buildLedger([
       ...sales.filter(s => s.customerId === detailsId && s.paymentType === 'due').map(s => ({
-        id: s.id, date: s.createdAt, kind: 'charge' as const, amount: s.total, title: 'বাকিতে কেনা', sub: saleSummary(s),
+        id: s.id, date: s.createdAt, kind: 'charge' as const, amount: s.total, title: 'বাকিতে কেনা', lines: saleLines(s),
+        onInvoice: (balanceAfter: number) =>
+          setInvoice(buildSaleInvoice(s, customers.find(c => c.id === detailsId), balanceAfter)),
       })),
       ...duePayments.filter(p => p.customerId === detailsId).map(p => ({
         id: p.id, date: p.createdAt, kind: 'payment' as const, amount: p.amount, title: 'বাকি পরিশোধ',
         onDelete: () => setDeletePayId(p.id),
       })),
     ]);
-  }, [detailsId, sales, duePayments]);
+  }, [detailsId, sales, duePayments, customers]);
   const chargedTotal = ledger.filter(l => l.kind === 'charge').reduce((a, l) => a + l.amount, 0);
   const paidTotal = ledger.filter(l => l.kind === 'payment').reduce((a, l) => a + l.amount, 0);
 
@@ -1028,12 +1053,18 @@ function CustomerManagement() {
                 <div><p className="text-slate-500">পরিশোধ</p><p className="font-semibold text-emerald-600">{formatCurrency(paidTotal)}</p></div>
                 <div><p className="text-slate-500">এখনকার বাকি</p><p className="font-semibold text-red-600">{formatCurrency(Math.max(0, dues[detailsCustomer.id] ?? 0))}</p></div>
               </div>
-              {(dues[detailsCustomer.id] ?? 0) > 0 && (
-                <Button className="h-10 w-full bg-emerald-600 text-white hover:bg-emerald-700"
-                  onClick={() => { const id = detailsCustomer.id; setDetailsId(null); setPayId(id); setPayAmount(''); setPayDate(todayStr()); }}>
-                  বাকি পরিশোধ নিন
+              <div className="grid grid-cols-2 gap-2">
+                {(dues[detailsCustomer.id] ?? 0) > 0 ? (
+                  <Button className="h-10 bg-emerald-600 text-white hover:bg-emerald-700"
+                    onClick={() => { const id = detailsCustomer.id; setDetailsId(null); setPayId(id); setPayAmount(''); setPayDate(todayStr()); }}>
+                    বাকি পরিশোধ নিন
+                  </Button>
+                ) : <span />}
+                <Button variant="outline" className="h-10"
+                  onClick={() => setInvoice(buildStatement(detailsCustomer, sales, duePayments))}>
+                  <Printer /> হিসাব প্রিন্ট / PDF
                 </Button>
-              )}
+              </div>
               <p className="text-xs font-medium text-slate-500">বাকির খাতা (কবে কী হয়েছে)</p>
               <Ledger entries={ledger} emptyText="এখনো কোনো বাকির লেনদেন নেই" />
             </div>
@@ -1060,6 +1091,7 @@ function CustomerManagement() {
         </DialogContent>
       </Dialog>
 
+      <InvoiceDialog doc={invoice} onClose={() => setInvoice(null)} />
       <ConfirmDialog
         open={!!deletePayId} title="এই পরিশোধ মুছবেন?" description="কাস্টমারের বাকি আবার বেড়ে যাবে।"
         onCancel={() => setDeletePayId(null)}

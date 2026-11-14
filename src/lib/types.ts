@@ -94,6 +94,14 @@ export interface SupplierPayment {
   createdAt: string;
 }
 
+// Shop details printed on invoices
+export interface ShopInfo {
+  name: string;
+  phone: string;
+  address: string;
+  note: string;
+}
+
 // Expense type
 export interface Expense {
   id: string;
