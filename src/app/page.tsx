@@ -458,6 +458,8 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
   const products = useStore(s => s.products);
   const customers = useStore(s => s.customers);
   const addSale = useStore(s => s.addSale);
+  const addCustomer = useStore(s => s.addCustomer);
+  const { map: dues } = useCustomerDues();
 
   const [items, setItems] = useState<SaleItem[]>([]);
   const [search, setSearch] = useState('');
@@ -467,12 +469,14 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
   const [weight, setWeight] = useState('');
   const [discount, setDiscount] = useState('');
   const [paidInput, setPaidInput] = useState<string | null>(null); // null = the full bill is paid now
-  const [customerId, setCustomerId] = useState('');
+  const [customerId, setCustomerId] = useState(''); // picked from the suggestions
+  const [custText, setCustText] = useState(''); // what is typed in the name box
+  const [newPhone, setNewPhone] = useState('');
 
   useEffect(() => {
     if (!open) {
       setItems([]); setSearch(''); setSaleCat(''); setSelectedId(''); setQty('1'); setWeight('');
-      setDiscount(''); setPaidInput(null); setCustomerId('');
+      setDiscount(''); setPaidInput(null); setCustomerId(''); setCustText(''); setNewPhone('');
     }
   }, [open]);
 
@@ -526,13 +530,38 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
     setSelectedId(''); setSearch(''); setQty('1'); setWeight('');
   };
 
+  // customers whose name or phone matches what is being typed (those who owe money come first)
+  const typed = custText.trim();
+  const suggestions = useMemo(() => {
+    if (customerId || !typed) return [];
+    const q = typed.toLowerCase();
+    return customers
+      .filter(c => c.name.toLowerCase().includes(q) || c.phone.includes(q))
+      .sort((a, b) => (dues[b.id] ?? 0) - (dues[a.id] ?? 0) || a.name.localeCompare(b.name))
+      .slice(0, 4);
+  }, [customers, customerId, typed, dues]);
+  const exactMatches = customers.filter(c => c.name.trim().toLowerCase() === typed.toLowerCase());
+  const pickedCustomer = customers.find(c => c.id === customerId);
+  const isNewName = !customerId && typed !== '' && exactMatches.length === 0;
+
   const handleSubmit = () => {
     if (items.length === 0) return;
-    if (dueN > 0 && !customerId) {
-      toast({ title: 'কাস্টমার বাছুন', description: 'বাকি থাকলে কাস্টমার দিতে হবে', variant: 'destructive' });
+    if (dueN > 0 && !customerId && !typed) {
+      toast({ title: 'কাস্টমারের নাম লিখুন', description: 'বাকি থাকলে কাস্টমারের নাম দিতে হবে', variant: 'destructive' });
       return;
     }
-    const customer = customers.find(c => c.id === customerId);
+    // 1) a suggestion was tapped, 2) the typed name is already a customer, 3) a brand new name -> create it now
+    let customer = pickedCustomer;
+    if (!customer && typed) {
+      if (exactMatches.length === 1) {
+        customer = exactMatches[0];
+      } else if (exactMatches.length > 1) {
+        toast({ title: 'একই নামের একাধিক কাস্টমার আছে', description: 'নিচের তালিকা থেকে সঠিকজনকে বেছে নিন', variant: 'destructive' });
+        return;
+      } else {
+        customer = addCustomer({ name: typed, phone: newPhone.trim(), address: '' });
+      }
+    }
     addSale({
       items, total, paid: paidN, discount: discountN,
       paymentType: dueN > 0 ? 'due' : 'cash',
@@ -690,17 +719,51 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
                 )}
               </div>
 
-              <Select value={customerId} onValueChange={setCustomerId}>
-                <SelectTrigger className="h-11 w-full" aria-label="কাস্টমার">
-                  <SelectValue placeholder={dueN > 0 ? 'কাস্টমার বাছুন (দরকার)' : 'কাস্টমার (ঐচ্ছিক)'} />
-                </SelectTrigger>
-                <SelectContent>
-                  {customers.length === 0 && <div className="p-3 text-sm text-slate-500">আগে একটি কাস্টমার যোগ করুন</div>}
-                  {customers.map(c => (
-                    <SelectItem key={c.id} value={c.id}>{c.name}{c.phone && ` · ${c.phone}`}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="space-y-1.5">
+                {pickedCustomer ? (
+                  <div className="flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold">{pickedCustomer.name}</p>
+                      <p className="text-[11px] text-slate-600">
+                        {pickedCustomer.phone || 'ফোন নেই'}
+                        {(dues[pickedCustomer.id] ?? 0) > 0 && ` · আগের বাকি ${formatCurrency(dues[pickedCustomer.id])}`}
+                      </p>
+                    </div>
+                    <Button type="button" variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label="কাস্টমার বদলান"
+                      onClick={() => { setCustomerId(''); setCustText(''); }}>
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    <Input id="sale-customer" autoComplete="off" className="h-11" value={custText}
+                      aria-label="কাস্টমারের নাম"
+                      placeholder={dueN > 0 ? 'কাস্টমারের নাম লিখুন (দরকার)' : 'কাস্টমারের নাম (ঐচ্ছিক)'}
+                      onChange={e => setCustText(e.target.value)} />
+                    {suggestions.length > 0 && (
+                      <ul className="divide-y overflow-hidden rounded-md border bg-white" aria-label="কাস্টমারের তালিকা">
+                        {suggestions.map(c => (
+                          <li key={c.id}>
+                            <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left active:bg-slate-100"
+                              onClick={() => { setCustomerId(c.id); setCustText(c.name); }}>
+                              <span className="min-w-0 flex-1 truncate text-sm font-medium">{c.name}</span>
+                              <span className="shrink-0 text-[11px] text-slate-500">{c.phone}</span>
+                              {(dues[c.id] ?? 0) > 0 && <span className="shrink-0 text-[11px] font-semibold text-red-600">বাকি {formatCurrency(dues[c.id])}</span>}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {isNewName && (
+                      <div className="space-y-1.5 rounded-md bg-emerald-50 p-2.5">
+                        <p className="text-xs font-medium text-emerald-700">নতুন কাস্টমার “{typed}” নিজে থেকে যোগ হবে</p>
+                        <Input inputMode="tel" type="tel" className="h-10 bg-white" placeholder="ফোন নম্বর (ঐচ্ছিক)" aria-label="নতুন কাস্টমারের ফোন"
+                          value={newPhone} onChange={e => setNewPhone(e.target.value)} />
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
           )}
         </div>

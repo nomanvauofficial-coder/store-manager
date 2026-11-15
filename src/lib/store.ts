@@ -161,7 +161,7 @@ interface StoreState {
   updateProduct: (id: string, product: Partial<Product>) => void;
   deleteProduct: (id: string) => void;
 
-  addCustomer: (customer: Omit<Customer, 'id' | 'createdAt'>) => void;
+  addCustomer: (customer: Omit<Customer, 'id' | 'createdAt'>) => Customer;
   updateCustomer: (id: string, customer: Partial<Customer>) => void;
   deleteCustomer: (id: string) => void;
 
@@ -396,6 +396,7 @@ export const useStore = create<StoreState>((set, get) => {
         t: 'insert', table: 'customers',
         row: { id: customer.id, name: customer.name, phone: customer.phone, address: customer.address, created_at: customer.createdAt },
       }, ['customers']);
+      return customer;
     },
     updateCustomer: (id, data) => {
       set({ customers: get().customers.map(c => (c.id === id ? { ...c, ...data } : c)) });
