@@ -3,14 +3,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useStore } from '@/lib/store';
-import type { Customer, DuePayment, Sale } from '@/lib/types';
+import type { Customer, DuePayment, Sale, SaleReturn } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { toast } from '@/hooks/use-toast';
 import { FileDown, Printer, Store } from 'lucide-react';
-import { fmt, formatCurrency, SHEET, PRIMARY_BTN, saleLines, type InvoiceLine } from '@/components/shared';
+import { fmt, formatCurrency, SHEET, PRIMARY_BTN, saleLines, saleDue, unitBn, type InvoiceLine } from '@/components/shared';
 
 /* ------------------------------------------------------------------ */
 /* Invoice data                                                        */
@@ -24,6 +24,8 @@ export interface InvoiceSection {
   lines?: InvoiceLine[];
   amount: number;
   balance?: number; // running balance after this entry (statements)
+  paidNow?: number; // money received at the time of the sale
+  discount?: number;
   note?: string;
 }
 
@@ -34,20 +36,18 @@ export interface InvoiceDoc {
   customer?: { name: string; phone?: string; address?: string };
   sections: InvoiceSection[];
   showBalance: boolean;
-  summary: { label: string; value: number; strong?: boolean; tone?: 'red' | 'green' }[];
+  summary: { label: string; value: number; strong?: boolean; tone?: 'red' | 'green'; neg?: boolean }[];
   fileName: string;
 }
 
-// Customer's total due right after a given moment (due sales minus payments up to then)
-export function customerBalanceAt(customerId: string, upTo: string, sales: Sale[], payments: DuePayment[]) {
+// Customer's total due right after a given moment: unpaid part of sales, minus payments and returns taken off the due
+export function customerBalanceAt(customerId: string, upTo: string, sales: Sale[], payments: DuePayment[], returns: SaleReturn[] = []) {
   const t = new Date(upTo).getTime();
-  const charged = sales
-    .filter(s => s.customerId === customerId && s.paymentType === 'due' && new Date(s.createdAt).getTime() <= t)
-    .reduce((a, s) => a + s.total, 0);
-  const paid = payments
-    .filter(p => p.customerId === customerId && new Date(p.createdAt).getTime() <= t)
-    .reduce((a, p) => a + p.amount, 0);
-  return charged - paid;
+  const before = (iso: string) => new Date(iso).getTime() <= t;
+  const charged = sales.filter(s => s.customerId === customerId && before(s.createdAt)).reduce((a, s) => a + saleDue(s), 0);
+  const paid = payments.filter(p => p.customerId === customerId && before(p.createdAt)).reduce((a, p) => a + p.amount, 0);
+  const credited = returns.filter(r => r.customerId === customerId && before(r.createdAt)).reduce((a, r) => a + r.credit, 0);
+  return charged - paid - credited;
 }
 
 const ymd = (iso: string | Date) => fmt(new Date(iso), 'yyyyMMdd');
@@ -55,18 +55,26 @@ const ymd = (iso: string | Date) => fmt(new Date(iso), 'yyyyMMdd');
 // File names must be plain English letters/digits: a Bangla name makes the browser drop the ".pdf" ending
 const safeName = (s?: string) => (s || '').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
-// One sale -> one invoice. balanceAfter = customer's total due right after this sale (for due sales).
+const r2 = (n: number) => Math.round(n * 100) / 100;
+
+// One sale -> one invoice. balanceAfter = customer's total due right after this sale.
 export function buildSaleInvoice(sale: Sale, customer?: Customer, balanceAfter?: number): InvoiceDoc {
-  const isDue = sale.paymentType === 'due';
-  const before = isDue && balanceAfter !== undefined ? Math.max(0, balanceAfter - sale.total) : undefined;
+  const due = saleDue(sale) || Math.max(0, r2(sale.total - sale.paid));
+  const subtotal = r2(sale.items.reduce((a, i) => a + i.subtotal, 0));
   const summary: InvoiceDoc['summary'] = [];
-  if (isDue) {
-    summary.push({ label: 'এই বিক্রি (বাকি)', value: sale.total });
-    if (before !== undefined && before > 0) summary.push({ label: 'আগের বাকি', value: before });
-    if (balanceAfter !== undefined) summary.push({ label: 'মোট বাকি', value: Math.max(0, balanceAfter), strong: true, tone: 'red' });
-  } else {
-    summary.push({ label: 'মোট', value: sale.total, strong: true });
-    summary.push({ label: 'পরিশোধ (নগদ)', value: sale.total, tone: 'green' });
+  if (sale.discount > 0) {
+    summary.push({ label: 'সাব-টোটাল', value: subtotal });
+    summary.push({ label: 'ছাড়', value: sale.discount, tone: 'green', neg: true });
+  }
+  summary.push({ label: 'মোট বিল', value: sale.total, strong: true });
+  if (sale.paid > 0) summary.push({ label: 'পরিশোধ', value: sale.paid, tone: 'green' });
+  if (due > 0) {
+    summary.push({ label: 'এই বিক্রির বাকি', value: due, tone: 'red' });
+    if (balanceAfter !== undefined) {
+      const before = Math.max(0, balanceAfter - due);
+      if (before > 0) summary.push({ label: 'আগের বাকি', value: before });
+      summary.push({ label: 'মোট বাকি', value: Math.max(0, balanceAfter), strong: true, tone: 'red' });
+    }
   }
   const name = customer?.name || sale.customerName;
   return {
@@ -76,7 +84,8 @@ export function buildSaleInvoice(sale: Sale, customer?: Customer, balanceAfter?:
     customer: name ? { name, phone: customer?.phone, address: customer?.address } : undefined,
     sections: [{
       id: sale.id, date: sale.createdAt, kind: 'sale',
-      title: isDue ? 'বাকিতে বিক্রি' : 'নগদ বিক্রি', lines: saleLines(sale), amount: sale.total,
+      title: due > 0 ? (sale.paid > 0 ? 'আংশিক বাকি বিক্রি' : 'বাকিতে বিক্রি') : 'নগদ বিক্রি',
+      lines: saleLines(sale), amount: sale.total,
     }],
     showBalance: false,
     summary,
@@ -84,26 +93,49 @@ export function buildSaleInvoice(sale: Sale, customer?: Customer, balanceAfter?:
   };
 }
 
-// Whole khata of a customer: every due sale (with products and the price at that time), every payment, running balance.
-export function buildStatement(customer: Customer, sales: Sale[], payments: DuePayment[]): InvoiceDoc {
+// Whole khata of a customer: every unpaid sale (products + price at that time), every payment, every return taken off the due, with running balance.
+export function buildStatement(customer: Customer, sales: Sale[], payments: DuePayment[], returns: SaleReturn[] = []): InvoiceDoc {
   const rows = [
-    ...sales.filter(s => s.customerId === customer.id && s.paymentType === 'due').map(s => ({
-      id: s.id, date: s.createdAt, kind: 'sale' as const, title: 'বাকিতে বিক্রি', lines: saleLines(s), amount: s.total,
+    ...sales.filter(s => s.customerId === customer.id && saleDue(s) > 0).map(s => ({
+      id: s.id, date: s.createdAt, kind: 'sale' as const, title: s.paid > 0 ? 'আংশিক বাকি বিক্রি' : 'বাকিতে বিক্রি',
+      lines: saleLines(s), amount: s.total, effect: saleDue(s), paidNow: s.paid, discount: s.discount,
     })),
     ...payments.filter(p => p.customerId === customer.id).map(p => ({
-      id: p.id, date: p.createdAt, kind: 'payment' as const, title: 'বাকি পরিশোধ', lines: undefined, amount: p.amount,
+      id: p.id, date: p.createdAt, kind: 'payment' as const, title: 'বাকি পরিশোধ',
+      lines: undefined as InvoiceLine[] | undefined, amount: p.amount, effect: -p.amount, paidNow: undefined, discount: undefined,
+    })),
+    ...returns.filter(r => r.customerId === customer.id && r.credit > 0).map(r => ({
+      id: r.id, date: r.createdAt, kind: 'payment' as const, title: 'পণ্য ফেরত (বাকি থেকে কাটা)',
+      lines: r.items.map(i => ({ name: i.productName, qty: `${i.quantity} ${unitBn(i.unit)}`, price: i.price, subtotal: i.subtotal })) as InvoiceLine[] | undefined,
+      amount: r.credit, effect: -r.credit, paidNow: undefined, discount: undefined,
     })),
   ].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
   let balance = 0;
-  let charged = 0;
-  let paid = 0;
+  let billed = 0;
+  let paidAtSale = 0;
+  let paidLater = 0;
+  let credited = 0;
+  const returnIds = new Set(returns.map(r => r.id));
   const sections: InvoiceSection[] = rows.map(r => {
-    if (r.kind === 'sale') { balance += r.amount; charged += r.amount; } else { balance -= r.amount; paid += r.amount; }
-    return { ...r, balance };
+    balance += r.effect;
+    if (r.kind === 'sale') { billed += r.amount; paidAtSale += r.paidNow ?? 0; }
+    else if (returnIds.has(r.id)) credited += r.amount;
+    else paidLater += r.amount;
+    return {
+      id: r.id, date: r.date, kind: r.kind, title: r.title, lines: r.lines, amount: r.amount,
+      balance, paidNow: r.paidNow, discount: r.discount,
+    };
   });
 
   const now = new Date();
+  const summary: InvoiceDoc['summary'] = [
+    { label: 'মোট বিল (বাকির বিক্রি)', value: billed },
+    { label: 'বিক্রির সময় পেয়েছি', value: paidAtSale, tone: 'green' },
+    { label: 'পরে পরিশোধ', value: paidLater, tone: 'green' },
+  ];
+  if (credited > 0) summary.push({ label: 'ফেরত বাবদ কাটা', value: credited, tone: 'green' });
+  summary.push({ label: 'বর্তমান বাকি', value: Math.max(0, balance), strong: true, tone: 'red' });
   return {
     title: 'হিসাবের বিবরণী',
     number: `ST-${ymd(now)}`,
@@ -111,11 +143,7 @@ export function buildStatement(customer: Customer, sales: Sale[], payments: DueP
     customer: { name: customer.name, phone: customer.phone, address: customer.address },
     sections,
     showBalance: true,
-    summary: [
-      { label: 'মোট বাকিতে কেনা', value: charged },
-      { label: 'মোট পরিশোধ', value: paid, tone: 'green' },
-      { label: 'বর্তমান বাকি', value: Math.max(0, balance), strong: true, tone: 'red' },
-    ],
+    summary,
     fileName: ['statement', safeName(customer.name), ymd(now)].filter(Boolean).join('-'),
   };
 }
@@ -167,6 +195,9 @@ export function InvoiceView({ doc, shop }: { doc: InvoiceDoc; shop?: { name: str
                 <span className={`font-bold ${s.kind === 'payment' ? 'text-emerald-600' : 'text-slate-900'}`}>
                   {s.kind === 'payment' ? '−' : ''}{formatCurrency(s.amount)}
                 </span>
+                {doc.showBalance && s.kind === 'sale' && (s.paidNow ?? 0) > 0 && (
+                  <p className="text-[11px] text-emerald-600">নগদ পেয়েছি {formatCurrency(s.paidNow ?? 0)}</p>
+                )}
                 {doc.showBalance && s.balance !== undefined && (
                   <p className="text-[11px] text-slate-500">বাকি {formatCurrency(Math.max(0, s.balance))}</p>
                 )}
@@ -194,6 +225,9 @@ export function InvoiceView({ doc, shop }: { doc: InvoiceDoc; shop?: { name: str
                 </tbody>
               </table>
             )}
+            {doc.showBalance && (s.discount ?? 0) > 0 && (
+              <p className="border-t border-slate-100 px-3 py-1 text-right text-[11px] text-slate-500">ছাড় −{formatCurrency(s.discount ?? 0)}</p>
+            )}
           </div>
         ))}
       </div>
@@ -204,7 +238,7 @@ export function InvoiceView({ doc, shop }: { doc: InvoiceDoc; shop?: { name: str
           {doc.summary.map(r => (
             <div key={r.label} className={`flex items-center justify-between gap-4 ${r.strong ? 'border-t border-slate-300 pt-1 text-[14px] font-bold' : ''}`}>
               <span className={r.strong ? '' : 'text-slate-600'}>{r.label}</span>
-              <span className={`${toneClass(r.tone)} ${r.strong ? '' : 'font-medium'}`}>{formatCurrency(r.value)}</span>
+              <span className={`${toneClass(r.tone)} ${r.strong ? '' : 'font-medium'}`}>{r.neg ? '−' : ''}{formatCurrency(r.value)}</span>
             </div>
           ))}
         </div>

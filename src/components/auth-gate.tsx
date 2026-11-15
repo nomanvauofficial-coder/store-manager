@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { useStore } from '@/lib/store';
+import { useStore, isRetryable } from '@/lib/store';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -94,6 +94,20 @@ function LoginForm() {
   );
 }
 
+// No internet and the login token could not be renewed: use the login that is saved on this phone
+function storedUserId(): string | null {
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && /^sb-.+-auth-token$/.test(k)) {
+        const v = JSON.parse(localStorage.getItem(k) || 'null');
+        if (v?.user?.id) return v.user.id as string;
+      }
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<Status>('checking');
   const [errorText, setErrorText] = useState('');
@@ -110,21 +124,41 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     currentUser.current = userId;
     setStatus('checking');
     const { data: isMember, error } = await supabase.rpc('claim_store');
+    let member = !!isMember;
     if (error) {
-      setErrorText(error.message);
-      setStatus('error');
-      return;
+      // offline: if this phone was allowed in before, let it work with its saved copy
+      let knownMember = false;
+      try { knownMember = localStorage.getItem(`sm-member-${userId}`) === '1'; } catch { /* ignore */ }
+      if (isRetryable(error) && knownMember) {
+        member = true;
+      } else {
+        setErrorText(error.message);
+        setStatus('error');
+        return;
+      }
+    } else if (isMember) {
+      try { localStorage.setItem(`sm-member-${userId}`, '1'); } catch { /* ignore */ }
     }
-    if (!isMember) {
+    if (!member) {
       setStatus('denied');
       return;
     }
-    await useStore.getState().start();
+    try {
+      await useStore.getState().start(userId);
+    } catch (e) {
+      setErrorText((e as Error).message);
+      setStatus('error');
+      return;
+    }
     setStatus('ready');
   };
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => enter(data.session?.user.id ?? null));
+    supabase.auth.getSession().then(({ data, error }) => {
+      let id = data.session?.user.id ?? null;
+      if (!id && (error || !navigator.onLine)) id = storedUserId(); // offline: the saved login on this phone
+      return enter(id);
+    });
     const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
         setTimeout(() => enter(session?.user.id ?? null), 0);

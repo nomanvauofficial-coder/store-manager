@@ -28,7 +28,7 @@ import { Toaster } from '@/components/ui/toaster';
 import {
   ShoppingCart, Package, TrendingUp, Plus, Minus, Trash2, Pencil, Search, CreditCard,
   Wallet, Receipt, AlertCircle, X, Scale, Home as HomeIcon, Users, BarChart3, Phone,
-  Banknote, LogOut, Truck, Printer, type LucideIcon,
+  Banknote, Settings, Truck, Printer, Undo2, type LucideIcon,
 } from 'lucide-react';
 import {
   BarChart as RechartsBar, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -64,8 +64,10 @@ import {
   CategoryChips,
   TONES,
   StatCard,
-  itemProfit, profitOf, useSupplierDues, todayStr, dateStrToIso, DateField, buildLedger, Ledger, saleLines,
+  saleDue, itemProfit, profitOf, useSupplierDues, todayStr, dateStrToIso, DateField, buildLedger, Ledger, saleLines,
 } from '@/components/shared';
+import { ReturnDialog, ReturnsList } from '@/components/returns';
+import { BackupBanner, SettingsDialog, SyncChip } from '@/components/backup';
 import { InvoiceDialog, buildSaleInvoice, buildStatement, customerBalanceAt, type InvoiceDoc } from '@/components/invoice';
 import { SupplierModule } from '@/components/suppliers';
 import { InstallBanner } from '@/components/pwa';
@@ -95,6 +97,7 @@ export default function Page() {
 function Home() {
   useVisualViewport();
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const lowStockCount = useStore(s => s.products.filter(p => p.stock <= LOW_STOCK).length);
 
   const go = (tab: string) => {
@@ -113,10 +116,11 @@ function Home() {
             স্টোর ম্যানেজার
           </h1>
           <div className="flex items-center gap-1">
-            <span className="text-xs text-slate-500 sm:text-sm">{fmt(new Date(), 'EEE, MMM d')}</span>
-            <Button variant="ghost" size="icon" className="h-9 w-9" aria-label="সাইন আউট"
-              onClick={() => supabase.auth.signOut()}>
-              <LogOut className="h-4 w-4 text-slate-500" />
+            <SyncChip onClick={() => setSettingsOpen(true)} />
+            <span className="text-xs text-slate-500 max-[380px]:hidden sm:text-sm">{fmt(new Date(), 'EEE, MMM d')}</span>
+            <Button variant="ghost" size="icon" className="h-9 w-9" aria-label="সেটিংস ও ব্যাকআপ"
+              onClick={() => setSettingsOpen(true)}>
+              <Settings className="h-4 w-4 text-slate-500" />
             </Button>
           </div>
         </div>
@@ -131,7 +135,7 @@ function Home() {
             ))}
           </TabsList>
 
-          <TabsContent value="dashboard"><Dashboard go={go} /></TabsContent>
+          <TabsContent value="dashboard"><Dashboard go={go} onOpenSettings={() => setSettingsOpen(true)} /></TabsContent>
           <TabsContent value="sales"><SalesModule /></TabsContent>
           <TabsContent value="products"><ProductManagement /></TabsContent>
           <TabsContent value="customers"><CustomerManagement /></TabsContent>
@@ -170,6 +174,7 @@ function Home() {
           })}
         </div>
       </nav>
+      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <Toaster />
     </div>
   );
@@ -179,9 +184,10 @@ function Home() {
 /* Dashboard                                                           */
 /* ------------------------------------------------------------------ */
 
-function Dashboard({ go }: { go: (tab: string) => void }) {
+function Dashboard({ go, onOpenSettings }: { go: (tab: string) => void; onOpenSettings: () => void }) {
   const products = useStore(s => s.products);
   const sales = useStore(s => s.sales);
+  const returns = useStore(s => s.returns);
   const expenses = useStore(s => s.expenses);
   const { total: totalDue } = useCustomerDues();
   const [saleOpen, setSaleOpen] = useState(false);
@@ -189,16 +195,19 @@ function Dashboard({ go }: { go: (tab: string) => void }) {
   const [expenseOpen, setExpenseOpen] = useState(false);
 
   const todaySales = sales.filter(s => inRange(s.createdAt, 'today'));
-  const todayRevenue = todaySales.reduce((sum, s) => sum + s.total, 0);
-  const monthlyRevenue = sales.filter(s => inRange(s.createdAt, 'month')).reduce((sum, s) => sum + s.total, 0);
+  const sumTotal = (list: { total: number }[]) => list.reduce((sum, x) => sum + x.total, 0);
+  // returned goods are taken off the sales
+  const todayRevenue = sumTotal(todaySales) - sumTotal(returns.filter(r => inRange(r.createdAt, 'today')));
+  const monthlyRevenue = sumTotal(sales.filter(s => inRange(s.createdAt, 'month'))) - sumTotal(returns.filter(r => inRange(r.createdAt, 'month')));
   const monthlyExpenses = expenses.filter(e => inRange(e.createdAt, 'month')).reduce((sum, e) => sum + e.amount, 0);
   const lowStockProducts = products.filter(p => p.stock <= LOW_STOCK);
   const recentSales = [...sales].sort(byNewest).slice(0, 5);
-  const monthProfit = profitOf(sales.filter(s => inRange(s.createdAt, 'month')));
+  const monthProfit = profitOf(sales.filter(s => inRange(s.createdAt, 'month')), returns.filter(r => inRange(r.createdAt, 'month')));
   const profit = monthProfit.profit - monthlyExpenses;
 
   return (
     <div className="space-y-3 sm:space-y-6">
+      <BackupBanner onOpen={onOpenSettings} />
       <InstallBanner />
       <div className="grid grid-cols-2 gap-2 sm:gap-4 lg:grid-cols-4">
         <StatCard label="আজকের বিক্রি" value={formatCurrency(todayRevenue)} sub={`${todaySales.length}টি লেনদেন`}
@@ -269,8 +278,8 @@ function Dashboard({ go }: { go: (tab: string) => void }) {
 
 // Compact list on mobile, table on desktop
 function SalesList({
-  sales, onDelete, onInvoice, emptyAction,
-}: { sales: Sale[]; onDelete?: (id: string) => void; onInvoice?: (sale: Sale) => void; emptyAction?: React.ReactNode }) {
+  sales, onDelete, onInvoice, onReturn, emptyAction,
+}: { sales: Sale[]; onDelete?: (id: string) => void; onInvoice?: (sale: Sale) => void; onReturn?: (sale: Sale) => void; emptyAction?: React.ReactNode }) {
   if (sales.length === 0) return <EmptyState icon={Receipt} text="এখনো কোনো বিক্রি নেই" action={emptyAction} />;
   return (
     <>
@@ -281,7 +290,7 @@ function SalesList({
               <p className="truncate text-sm font-medium">{saleSummary(sale)}</p>
               <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500">
                 {fmt(new Date(sale.createdAt), 'MMM d, h:mm a')}
-                <PaymentBadge type={sale.paymentType} />
+                <PaymentBadge sale={sale} />
                 {sale.customerName && <span className="truncate">· {sale.customerName}</span>}
               </p>
             </div>
@@ -289,6 +298,11 @@ function SalesList({
             {onInvoice && (
               <Button variant="ghost" size="icon" className="h-10 w-10 shrink-0" aria-label="ইনভয়েস" onClick={() => onInvoice(sale)}>
                 <Printer className="h-4 w-4 text-blue-700" />
+              </Button>
+            )}
+            {onReturn && (
+              <Button variant="ghost" size="icon" className="h-10 w-10 shrink-0" aria-label="পণ্য ফেরত" onClick={() => onReturn(sale)}>
+                <Undo2 className="h-4 w-4 text-amber-600" />
               </Button>
             )}
             {onDelete && (
@@ -309,7 +323,7 @@ function SalesList({
               <TableHead>পেমেন্ট</TableHead>
               <TableHead>কাস্টমার</TableHead>
               <TableHead className="text-right">মোট</TableHead>
-              {(onDelete || onInvoice) && <TableHead className="text-right">কাজ</TableHead>}
+              {(onDelete || onInvoice || onReturn) && <TableHead className="text-right">কাজ</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -317,14 +331,19 @@ function SalesList({
               <TableRow key={sale.id}>
                 <TableCell className="text-xs">{fmt(new Date(sale.createdAt), 'MMM d, h:mm a')}</TableCell>
                 <TableCell className="max-w-xs truncate text-xs">{saleSummary(sale)}</TableCell>
-                <TableCell><PaymentBadge type={sale.paymentType} /></TableCell>
+                <TableCell><PaymentBadge sale={sale} /></TableCell>
                 <TableCell className="text-xs">{sale.customerName || '-'}</TableCell>
                 <TableCell className="text-right text-xs font-medium text-emerald-600">{formatCurrency(sale.total)}</TableCell>
-                {(onDelete || onInvoice) && (
+                {(onDelete || onInvoice || onReturn) && (
                   <TableCell className="text-right">
                     {onInvoice && (
                       <Button variant="ghost" size="icon" aria-label="ইনভয়েস" onClick={() => onInvoice(sale)}>
                         <Printer className="h-4 w-4 text-blue-700" />
+                      </Button>
+                    )}
+                    {onReturn && (
+                      <Button variant="ghost" size="icon" aria-label="পণ্য ফেরত" onClick={() => onReturn(sale)}>
+                        <Undo2 className="h-4 w-4 text-amber-600" />
                       </Button>
                     )}
                     {onDelete && (
@@ -348,6 +367,11 @@ function SalesModule() {
   const customers = useStore(s => s.customers);
   const duePayments = useStore(s => s.duePayments);
   const deleteSale = useStore(s => s.deleteSale);
+  const returns = useStore(s => s.returns);
+  const deleteReturn = useStore(s => s.deleteReturn);
+  const [view, setView] = useState<'sales' | 'returns'>('sales');
+  const [retSale, setRetSale] = useState<Sale | null>(null);
+  const [deleteReturnId, setDeleteReturnId] = useState<string | null>(null);
   const [invoice, setInvoice] = useState<InvoiceDoc | null>(null);
   const [open, setOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -355,9 +379,20 @@ function SalesModule() {
 
   const filtered = useMemo(() => sales.filter(s => inRange(s.createdAt, range)).sort(byNewest), [sales, range]);
   const total = filtered.reduce((sum, s) => sum + s.total, 0);
+  const filteredReturns = useMemo(() => returns.filter(r => inRange(r.createdAt, range)).sort(byNewest), [returns, range]);
+  const returnsTotal = filteredReturns.reduce((sum, r) => sum + r.total, 0);
 
   return (
     <div className="space-y-3 sm:space-y-4">
+      <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1 sm:w-72" role="tablist">
+        {([['sales', 'বিক্রি'], ['returns', `ফেরত${returns.length ? ` · ${returns.length}` : ''}`]] as const).map(([id, label]) => (
+          <button key={id} role="tab" aria-selected={view === id} onClick={() => setView(id)}
+            className={`h-8 rounded-md text-xs font-medium ${view === id ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600'}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
       <div className="flex items-center gap-2">
         <RangeTabs value={range} onChange={setRange} />
         <Button onClick={() => setOpen(true)} className={`ml-auto h-10 shrink-0 ${PRIMARY_BTN}`}>
@@ -366,23 +401,45 @@ function SalesModule() {
       </div>
 
       <div className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-sm shadow-sm">
-        <span className="text-slate-500">{filtered.length}টি বিক্রি</span>
-        <span className="font-semibold text-emerald-700">{formatCurrency(total)}</span>
+        {view === 'sales' ? (
+          <>
+            <span className="text-slate-500">{filtered.length}টি বিক্রি</span>
+            <span className="font-semibold text-emerald-700">{formatCurrency(total)}</span>
+          </>
+        ) : (
+          <>
+            <span className="text-slate-500">{filteredReturns.length}টি ফেরত</span>
+            <span className="font-semibold text-red-600">−{formatCurrency(returnsTotal)}</span>
+          </>
+        )}
       </div>
 
       <Card className="gap-0 overflow-hidden py-0 shadow-sm">
         <CardContent className="p-0">
-          <SalesList sales={filtered} onDelete={setDeleteId} onInvoice={sale => {
+          {view === 'returns' ? (
+            <ReturnsList returns={filteredReturns} onDelete={setDeleteReturnId} />
+          ) : (
+          <SalesList sales={filtered} onDelete={setDeleteId} onReturn={setRetSale} onInvoice={sale => {
             const customer = customers.find(c => c.id === sale.customerId);
             const after = sale.paymentType === 'due' && sale.customerId
-              ? customerBalanceAt(sale.customerId, sale.createdAt, sales, duePayments) : undefined;
+              ? customerBalanceAt(sale.customerId, sale.createdAt, sales, duePayments, returns) : undefined;
             setInvoice(buildSaleInvoice(sale, customer, after));
           }} />
+          )}
         </CardContent>
       </Card>
 
       <NewSaleDialog open={open} onClose={() => setOpen(false)} />
       <InvoiceDialog doc={invoice} onClose={() => setInvoice(null)} />
+      <ReturnDialog sale={retSale} onClose={() => setRetSale(null)} />
+      <ConfirmDialog
+        open={!!deleteReturnId} title="এই ফেরত মুছবেন?" description="স্টক আবার কমে যাবে ও কাস্টমারের বাকি আবার বাড়বে।"
+        onCancel={() => setDeleteReturnId(null)}
+        onConfirm={() => {
+          if (deleteReturnId) { deleteReturn(deleteReturnId); toast({ title: 'ফেরত মুছে ফেলা হয়েছে' }); }
+          setDeleteReturnId(null);
+        }}
+      />
       <ConfirmDialog
         open={!!deleteId}
         title="বিক্রি মুছবেন?"
@@ -408,13 +465,14 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
   const [selectedId, setSelectedId] = useState('');
   const [qty, setQty] = useState('1');
   const [weight, setWeight] = useState('');
-  const [paymentType, setPaymentType] = useState<'cash' | 'due'>('cash');
+  const [discount, setDiscount] = useState('');
+  const [paidInput, setPaidInput] = useState<string | null>(null); // null = the full bill is paid now
   const [customerId, setCustomerId] = useState('');
 
   useEffect(() => {
     if (!open) {
       setItems([]); setSearch(''); setSaleCat(''); setSelectedId(''); setQty('1'); setWeight('');
-      setPaymentType('cash'); setCustomerId('');
+      setDiscount(''); setPaidInput(null); setCustomerId('');
     }
   }, [open]);
 
@@ -423,7 +481,11 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
   const inCart = items.find(i => i.productId === selectedId)?.quantity ?? 0;
   const available = selected ? Math.round((selected.stock - inCart) * 1000) / 1000 : 0;
   const amount = Number(isWeight ? weight : qty);
-  const total = items.reduce((sum, i) => sum + i.subtotal, 0);
+  const subtotal = Math.round(items.reduce((sum, i) => sum + i.subtotal, 0) * 100) / 100;
+  const discountN = Math.min(Math.max(Number(discount) || 0, 0), subtotal);
+  const total = Math.round((subtotal - discountN) * 100) / 100; // bill after discount
+  const paidN = paidInput === null ? total : Math.min(Math.max(Number(paidInput) || 0, 0), total);
+  const dueN = Math.round((total - paidN) * 100) / 100; // still to be paid later
 
   const matches = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -466,17 +528,21 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
 
   const handleSubmit = () => {
     if (items.length === 0) return;
-    if (paymentType === 'due' && !customerId) {
-      toast({ title: 'কাস্টমার বাছুন', description: 'বাকিতে বিক্রির জন্য কাস্টমার দিতে হবে', variant: 'destructive' });
+    if (dueN > 0 && !customerId) {
+      toast({ title: 'কাস্টমার বাছুন', description: 'বাকি থাকলে কাস্টমার দিতে হবে', variant: 'destructive' });
       return;
     }
     const customer = customers.find(c => c.id === customerId);
     addSale({
-      items, total, paymentType,
-      customerId: paymentType === 'due' ? customerId : undefined,
-      customerName: paymentType === 'due' ? customer?.name : undefined,
+      items, total, paid: paidN, discount: discountN,
+      paymentType: dueN > 0 ? 'due' : 'cash',
+      customerId: customer?.id,
+      customerName: customer?.name,
     });
-    toast({ title: 'বিক্রি সম্পন্ন', description: formatCurrency(total) });
+    toast({
+      title: 'বিক্রি সম্পন্ন',
+      description: dueN > 0 ? `বিল ${formatCurrency(total)} · বাকি ${formatCurrency(dueN)}` : formatCurrency(total),
+    });
     onClose();
   };
 
@@ -591,34 +657,61 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
             </ul>
           )}
 
-          {/* Payment */}
-          <div className="grid grid-cols-2 gap-2">
-            <Button variant={paymentType === 'cash' ? 'default' : 'outline'} className="h-11" onClick={() => setPaymentType('cash')}>
-              <Wallet /> নগদ
-            </Button>
-            <Button variant={paymentType === 'due' ? 'default' : 'outline'} className="h-11" onClick={() => setPaymentType('due')}>
-              <CreditCard /> বাকি
-            </Button>
-          </div>
+          {/* Discount + payment */}
+          {items.length > 0 && (
+            <div className="space-y-2.5 rounded-lg border p-3">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-slate-600">সাব-টোটাল</span>
+                <span className="font-medium">{formatCurrency(subtotal)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <Label htmlFor="sale-discount" className="text-sm text-slate-600">ছাড় (৳)</Label>
+                <Input id="sale-discount" inputMode="decimal" placeholder="0" className="h-10 w-28 text-right"
+                  value={discount} onChange={e => setDiscount(e.target.value)} />
+              </div>
+              <div className="flex items-center justify-between border-t pt-2 text-sm font-semibold">
+                <span>মোট বিল</span>
+                <span>{formatCurrency(total)}</span>
+              </div>
 
-          {paymentType === 'due' && (
-            <Select value={customerId} onValueChange={setCustomerId}>
-              <SelectTrigger className="h-11 w-full" aria-label="কাস্টমার"><SelectValue placeholder="কাস্টমার বাছুন" /></SelectTrigger>
-              <SelectContent>
-                {customers.length === 0 && <div className="p-3 text-sm text-slate-500">আগে একটি কাস্টমার যোগ করুন</div>}
-                {customers.map(c => (
-                  <SelectItem key={c.id} value={c.id}>{c.name}{c.phone && ` · ${c.phone}`}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              <div className="space-y-1.5 border-t pt-2">
+                <Label htmlFor="sale-paid" className="text-sm text-slate-600">এখন কত টাকা পেলেন?</Label>
+                <div className="flex gap-2">
+                  <Input id="sale-paid" inputMode="decimal" className="h-11"
+                    value={paidInput === null ? String(total) : paidInput}
+                    onChange={e => setPaidInput(e.target.value)} />
+                  <Button type="button" variant={paidInput === null ? 'default' : 'outline'} className="h-11 shrink-0"
+                    onClick={() => setPaidInput(null)}>পুরো</Button>
+                  <Button type="button" variant={paidInput === '0' ? 'default' : 'outline'} className="h-11 shrink-0"
+                    onClick={() => setPaidInput('0')}>বাকি</Button>
+                </div>
+                {dueN > 0 && (
+                  <p className="text-xs font-medium text-red-600">এই বিক্রিতে বাকি থাকবে {formatCurrency(dueN)}</p>
+                )}
+              </div>
+
+              <Select value={customerId} onValueChange={setCustomerId}>
+                <SelectTrigger className="h-11 w-full" aria-label="কাস্টমার">
+                  <SelectValue placeholder={dueN > 0 ? 'কাস্টমার বাছুন (দরকার)' : 'কাস্টমার (ঐচ্ছিক)'} />
+                </SelectTrigger>
+                <SelectContent>
+                  {customers.length === 0 && <div className="p-3 text-sm text-slate-500">আগে একটি কাস্টমার যোগ করুন</div>}
+                  {customers.map(c => (
+                    <SelectItem key={c.id} value={c.id}>{c.name}{c.phone && ` · ${c.phone}`}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           )}
         </div>
 
         {/* Sticky total + action */}
         <div className="sticky bottom-0 -mx-4 flex items-center gap-3 border-t bg-white px-4 pt-3 sm:mx-0 sm:px-0">
           <div className="leading-tight">
-            <p className="text-[11px] text-slate-500">মোট</p>
-            <p className="text-xl font-bold text-emerald-700">{formatCurrency(total)}</p>
+            <p className="text-[11px] text-slate-500">{dueN > 0 ? `পাবেন ${formatCurrency(paidN)}` : 'মোট বিল'}</p>
+            <p className={`text-xl font-bold ${dueN > 0 ? 'text-red-600' : 'text-emerald-700'}`}>
+              {dueN > 0 ? `বাকি ${formatCurrency(dueN)}` : formatCurrency(total)}
+            </p>
           </div>
           <Button onClick={handleSubmit} disabled={items.length === 0} className="h-11 flex-1 bg-emerald-600 text-white hover:bg-emerald-700">
             বিক্রি সম্পন্ন করুন
@@ -894,6 +987,7 @@ function CustomerManagement() {
   const addDuePayment = useStore(s => s.addDuePayment);
   const deleteDuePayment = useStore(s => s.deleteDuePayment);
   const duePayments = useStore(s => s.duePayments);
+  const returns = useStore(s => s.returns);
   const { map: dues } = useCustomerDues();
 
   const [search, setSearch] = useState('');
@@ -920,17 +1014,24 @@ function CustomerManagement() {
   const ledger = useMemo(() => {
     if (!detailsId) return [];
     return buildLedger([
-      ...sales.filter(s => s.customerId === detailsId && s.paymentType === 'due').map(s => ({
-        id: s.id, date: s.createdAt, kind: 'charge' as const, amount: s.total, title: 'বাকিতে কেনা', lines: saleLines(s),
+      ...sales.filter(s => s.customerId === detailsId && saleDue(s) > 0).map(s => ({
+        id: s.id, date: s.createdAt, kind: 'charge' as const, amount: saleDue(s),
+        title: s.paid > 0 ? 'আংশিক বাকি' : 'বাকিতে কেনা',
+        sub: `বিল ${formatCurrency(s.total)}${s.paid > 0 ? ` · নগদ ${formatCurrency(s.paid)}` : ''}${s.discount > 0 ? ` · ছাড় ${formatCurrency(s.discount)}` : ''}`,
+        lines: saleLines(s),
         onInvoice: (balanceAfter: number) =>
           setInvoice(buildSaleInvoice(s, customers.find(c => c.id === detailsId), balanceAfter)),
+      })),
+      ...returns.filter(r => r.customerId === detailsId && r.credit > 0).map(r => ({
+        id: r.id, date: r.createdAt, kind: 'payment' as const, amount: r.credit, title: 'পণ্য ফেরত (বাকি থেকে কাটা)',
+        lines: r.items.map(i => ({ name: i.productName, qty: `${i.quantity} ${unitBn(i.unit)}`, price: i.price, subtotal: i.subtotal })),
       })),
       ...duePayments.filter(p => p.customerId === detailsId).map(p => ({
         id: p.id, date: p.createdAt, kind: 'payment' as const, amount: p.amount, title: 'বাকি পরিশোধ',
         onDelete: () => setDeletePayId(p.id),
       })),
     ]);
-  }, [detailsId, sales, duePayments, customers]);
+  }, [detailsId, sales, duePayments, customers, returns]);
   const chargedTotal = ledger.filter(l => l.kind === 'charge').reduce((a, l) => a + l.amount, 0);
   const paidTotal = ledger.filter(l => l.kind === 'payment').reduce((a, l) => a + l.amount, 0);
 
@@ -1061,7 +1162,7 @@ function CustomerManagement() {
                   </Button>
                 ) : <span />}
                 <Button variant="outline" className="h-10"
-                  onClick={() => setInvoice(buildStatement(detailsCustomer, sales, duePayments))}>
+                  onClick={() => setInvoice(buildStatement(detailsCustomer, sales, duePayments, returns))}>
                   <Printer /> হিসাব প্রিন্ট / PDF
                 </Button>
               </div>
@@ -1254,6 +1355,7 @@ function ExpenseTracking() {
 
 function Reports() {
   const sales = useStore(s => s.sales);
+  const returns = useStore(s => s.returns);
   const expenses = useStore(s => s.expenses);
   const { total: totalDue } = useCustomerDues();
   const { total: supplierDue } = useSupplierDues();
@@ -1266,7 +1368,11 @@ function Reports() {
     const today = new Date();
     const out: { date: string; sales: number; expenses: number }[] = [];
     const push = (label: string, start: Date, end: Date) =>
-      out.push({ date: label, sales: sumIn(sales, s => s.total, start, end), expenses: sumIn(expenses, e => e.amount, start, end) });
+      out.push({
+        date: label,
+        sales: sumIn(sales, s => s.total, start, end) - sumIn(returns, r => r.total, start, end),
+        expenses: sumIn(expenses, e => e.amount, start, end),
+      });
 
     if (period === 'daily') {
       for (let i = 23; i >= 0; i--) {
@@ -1288,11 +1394,11 @@ function Reports() {
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sales, expenses, period]);
+  }, [sales, returns, expenses, period]);
 
   const paymentData = useMemo(() => [
-    { name: 'নগদ', value: sales.filter(s => s.paymentType === 'cash').reduce((a, s) => a + s.total, 0), color: COLORS[0] },
-    { name: 'বাকি', value: sales.filter(s => s.paymentType === 'due').reduce((a, s) => a + s.total, 0), color: COLORS[1] },
+    { name: 'নগদ পেয়েছি', value: sales.reduce((a, s) => a + s.paid, 0), color: COLORS[0] },
+    { name: 'বাকি', value: sales.reduce((a, s) => a + Math.max(0, s.total - s.paid), 0), color: COLORS[1] },
   ], [sales]);
 
   const topProducts = useMemo(() => {
@@ -1321,9 +1427,9 @@ function Reports() {
     return Object.entries(map).map(([name, value], i) => ({ name, value, color: COLORS[i % COLORS.length] }));
   }, [expenses]);
 
-  const totalRevenue = sales.reduce((s, x) => s + x.total, 0);
+  const totalRevenue = sales.reduce((s, x) => s + x.total, 0) - returns.reduce((s, x) => s + x.total, 0);
   const totalExpenses = expenses.reduce((s, x) => s + x.amount, 0);
-  const gross = profitOf(sales);
+  const gross = profitOf(sales, returns);
   const net = gross.profit - totalExpenses;
   const fmtTip = (v: unknown) => formatCurrency(Number(v));
 

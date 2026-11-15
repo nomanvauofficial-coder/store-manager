@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useStore } from '@/lib/store';
 import { supabase } from '@/lib/supabase';
 import { AuthGate } from '@/components/auth-gate';
-import { Product, Sale, SaleItem } from '@/lib/types';
+import { Product, Sale, SaleItem, SaleReturn } from '@/lib/types';
 import {
   format as dfFormat, startOfDay, startOfWeek, startOfMonth, endOfDay, endOfWeek, endOfMonth,
   subDays, subMonths, isWithinInterval,
@@ -103,22 +103,32 @@ export const saleSummary = (sale: Sale) =>
     .join(', ');
 
 // Customer dues, calculated once
+const r2 = (n: number) => Math.round(n * 100) / 100;
+
+// What is still unpaid on one sale (the customer owes this)
+export const saleDue = (sale: Sale) => (sale.customerId ? Math.max(0, r2(sale.total - sale.paid)) : 0);
+
+// What each customer still owes: unpaid part of sales, minus later payments, minus returns taken off the due
 export function useCustomerDues() {
   const customers = useStore(s => s.customers);
   const sales = useStore(s => s.sales);
   const duePayments = useStore(s => s.duePayments);
+  const returns = useStore(s => s.returns);
   return useMemo(() => {
     const map: Record<string, number> = {};
     customers.forEach(c => { map[c.id] = 0; });
     sales.forEach(s => {
-      if (s.paymentType === 'due' && s.customerId && s.customerId in map) map[s.customerId] += s.total;
+      if (s.customerId && s.customerId in map) map[s.customerId] += saleDue(s);
     });
     duePayments.forEach(p => {
       if (p.customerId in map) map[p.customerId] -= p.amount;
     });
+    returns.forEach(r => {
+      if (r.customerId && r.customerId in map) map[r.customerId] -= r.credit;
+    });
     const total = Object.values(map).reduce((sum, v) => sum + Math.max(0, v), 0);
     return { map, total };
-  }, [customers, sales, duePayments]);
+  }, [customers, sales, duePayments, returns]);
 }
 
 /* ------------------------------------------------------------------ */
@@ -187,17 +197,19 @@ export function RangeTabs({ value, onChange }: { value: Range; onChange: (r: Ran
   );
 }
 
-export function PaymentBadge({ type }: { type: 'cash' | 'due' }) {
+export function PaymentBadge({ sale }: { sale: Sale }) {
+  const unpaid = sale.total - sale.paid;
+  const label = unpaid <= 0 ? 'নগদ' : sale.paid > 0 ? 'আংশিক' : 'বাকি';
   return (
-    <Badge variant={type === 'cash' ? 'default' : 'secondary'} className="text-[10px] px-1.5 py-0 capitalize">
-      {type === 'cash' ? 'নগদ' : 'বাকি'}
+    <Badge variant={unpaid <= 0 ? 'default' : 'secondary'} className="px-1.5 py-0 text-[10px]">
+      {label}
     </Badge>
   );
 }
 
 export function ConfirmDialog({
-  open, title, description, onConfirm, onCancel,
-}: { open: boolean; title: string; description?: string; onConfirm: () => void; onCancel: () => void }) {
+  open, title, description, onConfirm, onCancel, confirmLabel = 'মুছুন', confirmClass = 'bg-red-500 hover:bg-red-600',
+}: { open: boolean; title: string; description?: string; onConfirm: () => void; onCancel: () => void; confirmLabel?: string; confirmClass?: string }) {
   return (
     <AlertDialog open={open} onOpenChange={o => { if (!o) onCancel(); }}>
       <AlertDialogContent>
@@ -207,7 +219,7 @@ export function ConfirmDialog({
         </AlertDialogHeader>
         <AlertDialogFooter className="max-sm:flex-row max-sm:gap-2">
           <AlertDialogCancel className="max-sm:flex-1 max-sm:mt-0">বাতিল</AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm} className="bg-red-500 hover:bg-red-600 max-sm:flex-1">মুছুন</AlertDialogAction>
+          <AlertDialogAction onClick={onConfirm} className={`${confirmClass} max-sm:flex-1`}>{confirmLabel}</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
@@ -296,16 +308,30 @@ export function itemProfit(i: SaleItem): number | null {
   return cost > 0 ? Math.round((i.subtotal - cost * i.quantity) * 100) / 100 : null;
 }
 
-export function profitOf(sales: Sale[]) {
+export function profitOf(sales: Sale[], returns: SaleReturn[] = []) {
   let profit = 0;
   let known = 0;
   let unknown = 0;
-  sales.forEach(s => s.items.forEach(i => {
-    const p = itemProfit(i);
-    if (p === null) unknown++;
-    else { profit += p; known++; }
+  sales.forEach(s => {
+    let saleProfit = 0;
+    let knownSub = 0;
+    let allSub = 0;
+    s.items.forEach(i => {
+      allSub += i.subtotal;
+      const p = itemProfit(i);
+      if (p === null) unknown++;
+      else { saleProfit += p; knownSub += i.subtotal; known++; }
+    });
+    // the discount lowers the profit (only the share that belongs to items with a known buying price)
+    if (s.discount > 0 && allSub > 0) saleProfit -= s.discount * (knownSub / allSub);
+    profit += saleProfit;
+  });
+  // returned goods take their profit back
+  returns.forEach(r => r.items.forEach(i => {
+    const cost = i.costPrice ?? 0;
+    if (cost > 0) profit -= i.subtotal - cost * i.quantity;
   }));
-  return { profit, known, unknown };
+  return { profit: r2(profit), known, unknown };
 }
 
 // What we still owe each supplier: purchases (total - paid) minus later payments

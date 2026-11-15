@@ -38,10 +38,36 @@ export interface SaleItem {
 export interface Sale {
   id: string;
   items: SaleItem[];
-  total: number;
-  paymentType: 'cash' | 'due';
+  total: number; // final bill AFTER discount
+  paid: number; // money received at the time of sale
+  discount: number; // discount given on the whole bill
+  paymentType: 'cash' | 'due'; // 'due' when something is still unpaid (paid < total)
   customerId?: string;
   customerName?: string;
+  createdAt: string;
+}
+
+// Goods a customer brought back
+export interface ReturnItem {
+  productId: string;
+  productName: string;
+  quantity: number;
+  price: number; // selling price per unit
+  costPrice?: number;
+  subtotal: number; // value of the returned goods (after the bill's discount share)
+  pricingType: 'fixed' | 'weight';
+  unit: string;
+}
+
+export interface SaleReturn {
+  id: string;
+  saleId?: string;
+  customerId?: string;
+  customerName?: string;
+  items: ReturnItem[];
+  total: number; // value of returned goods
+  credit: number; // part taken off the customer's due (the rest is given back in cash)
+  note: string;
   createdAt: string;
 }
 
