@@ -91,12 +91,23 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
   const [shop, setShop] = useState({ name: '', phone: '', address: '', note: '' });
   const [busy, setBusy] = useState<'' | 'xlsx' | 'json' | 'restore'>('');
   const [last, setLast] = useState<number | null>(null);
+  const [offlineReady, setOfflineReady] = useState<'checking' | 'yes' | 'no'>('checking');
   const [restoreFile, setRestoreFile] = useState<{ name: string; tables: Record<string, Record<string, unknown>[]> } | null>(null);
 
   useEffect(() => {
     if (open) {
       setShop(shopRow ?? { name: '', phone: '', address: '', note: '' });
       setLast(getLastBackup());
+      // are all app files saved on this phone (so the app and the scanner open without internet)?
+      setOfflineReady('checking');
+      (async () => {
+        try {
+          const keys = await caches.keys();
+          const pre = keys.find(k => k.startsWith('sm-pre-'));
+          const count = pre ? (await (await caches.open(pre)).keys()).length : 0;
+          setOfflineReady(count > 5 ? 'yes' : 'no');
+        } catch { setOfflineReady('no'); }
+      })();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -230,6 +241,13 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
               <p className="font-semibold text-slate-900">{st.online ? 'ক্লাউডের সাথে যুক্ত' : 'অফলাইন'}</p>
               <p className="text-slate-600">
                 {st.pending > 0 ? `${st.pending}টি পরিবর্তন সেভ হওয়ার অপেক্ষায় (ইন্টারনেট এলে নিজে সেভ হবে)` : 'সব পরিবর্তন সেভ হয়েছে'}
+              </p>
+              <p className={offlineReady === 'yes' ? 'text-emerald-700' : 'text-amber-700'}>
+                {offlineReady === 'yes'
+                  ? '✓ অ্যাপ ফোনে সেভ আছে, ইন্টারনেট ছাড়াও খুলবে'
+                  : offlineReady === 'no'
+                    ? 'অ্যাপ ফাইল ফোনে সেভ হচ্ছে… ইন্টারনেটে অ্যাপটা খোলা রাখুন'
+                    : ''}
               </p>
             </div>
             <Button variant="outline" size="sm" className="h-8" onClick={() => void st.sync()} disabled={st.syncing}>
