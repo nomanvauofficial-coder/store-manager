@@ -16,7 +16,7 @@ const uid = () =>
 
 /* ---------- row <-> app mapping ---------- */
 const toProduct = (r: Row): Product => ({
-  id: r.id, name: r.name, price: Number(r.price), costPrice: Number(r.cost_price ?? 0), stock: Number(r.stock),
+  id: r.id, name: r.name, price: Number(r.price), costPrice: Number(r.cost_price ?? 0), barcode: r.barcode ?? '', stock: Number(r.stock),
   category: r.category, pricingType: r.pricing_type, unit: r.unit,
   createdAt: r.created_at, updatedAt: r.updated_at,
 });
@@ -26,6 +26,7 @@ const fromProduct = (p: Partial<Product>): Row => {
   if (p.name !== undefined) r.name = p.name;
   if (p.price !== undefined) r.price = p.price;
   if (p.costPrice !== undefined) r.cost_price = p.costPrice;
+  if (p.barcode !== undefined) r.barcode = p.barcode.trim() || null;
   if (p.stock !== undefined) r.stock = p.stock;
   if (p.category !== undefined) r.category = p.category;
   if (p.pricingType !== undefined) r.pricing_type = p.pricingType;
@@ -157,7 +158,7 @@ interface StoreState {
   sync: () => Promise<void>;
   wipeLocal: () => Promise<void>;
 
-  addProduct: (product: Omit<Product, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  addProduct: (product: Omit<Product, 'id' | 'createdAt' | 'updatedAt'>) => Product;
   updateProduct: (id: string, product: Partial<Product>) => void;
   deleteProduct: (id: string) => void;
 
@@ -377,6 +378,7 @@ export const useStore = create<StoreState>((set, get) => {
       const product: Product = { ...data, id: uid(), createdAt: now, updatedAt: now };
       set({ products: [...get().products, product] });
       enqueue({ t: 'insert', table: 'products', row: fromProduct(product) }, ['products']);
+      return product;
     },
     updateProduct: (id, data) => {
       const updatedAt = new Date().toISOString();

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useStore } from '@/lib/store';
 import { supabase } from '@/lib/supabase';
 import { AuthGate } from '@/components/auth-gate';
@@ -28,7 +28,7 @@ import { Toaster } from '@/components/ui/toaster';
 import {
   ShoppingCart, Package, TrendingUp, Plus, Minus, Trash2, Pencil, Search, CreditCard,
   Wallet, Receipt, AlertCircle, X, Scale, Home as HomeIcon, Users, BarChart3, Phone,
-  Banknote, Settings, Truck, Printer, Undo2, type LucideIcon,
+  Banknote, Settings, Truck, Printer, Undo2, ScanBarcode, type LucideIcon,
 } from 'lucide-react';
 import {
   BarChart as RechartsBar, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -67,6 +67,7 @@ import {
   saleDue, itemProfit, profitOf, useSupplierDues, todayStr, dateStrToIso, DateField, buildLedger, Ledger, saleLines,
 } from '@/components/shared';
 import { ReturnDialog, ReturnsList } from '@/components/returns';
+import { BarcodeScanner } from '@/components/scanner';
 import { BackupBanner, SettingsDialog, SyncChip } from '@/components/backup';
 import { InvoiceDialog, buildSaleInvoice, buildStatement, customerBalanceAt, type InvoiceDoc } from '@/components/invoice';
 import { SupplierModule } from '@/components/suppliers';
@@ -459,8 +460,14 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
   const customers = useStore(s => s.customers);
   const addSale = useStore(s => s.addSale);
   const addCustomer = useStore(s => s.addCustomer);
+  const updateProduct = useStore(s => s.updateProduct);
   const { map: dues } = useCustomerDues();
 
+  const [scanOpen, setScanOpen] = useState(false);
+  const [scanMsg, setScanMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [unknownCode, setUnknownCode] = useState<string | null>(null);
+  const [linkSearch, setLinkSearch] = useState('');
+  const [newProdCode, setNewProdCode] = useState('');
   const [items, setItems] = useState<SaleItem[]>([]);
   const [search, setSearch] = useState('');
   const [saleCat, setSaleCat] = useState('');
@@ -477,6 +484,7 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
     if (!open) {
       setItems([]); setSearch(''); setSaleCat(''); setSelectedId(''); setQty('1'); setWeight('');
       setDiscount(''); setPaidInput(null); setCustomerId(''); setCustText(''); setNewPhone('');
+      setScanOpen(false); setScanMsg(null); setUnknownCode(null); setLinkSearch(''); setNewProdCode('');
     }
   }, [open]);
 
@@ -502,33 +510,72 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
 
   const saleCategories = useMemo(() => getCategories(products.filter(p => p.stock > 0)), [products]);
 
+  // one place that puts a product into the cart (used by tapping and by scanning)
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  const addToCart = (p: Product, amt: number): boolean => {
+    const cur = itemsRef.current;
+    const w = p.pricingType === 'weight';
+    const inC = cur.find(i => i.productId === p.id)?.quantity ?? 0;
+    const avail = Math.round((p.stock - inC) * 1000) / 1000;
+    if (!(amt > 0) || amt > avail) {
+      toast({ title: 'ভুল পরিমাণ', description: `আছে: ${avail} ${unitBn(p.unit)}`, variant: 'destructive' });
+      return false;
+    }
+    if (!w && !Number.isInteger(amt)) {
+      toast({ title: 'ভুল সংখ্যা', description: 'পূর্ণ সংখ্যা দিন', variant: 'destructive' });
+      return false;
+    }
+    const newQty = Math.round((inC + amt) * 1000) / 1000;
+    const line: SaleItem = {
+      productId: p.id,
+      productName: p.name,
+      quantity: newQty,
+      weight: w ? newQty : undefined,
+      price: p.price,
+      costPrice: p.costPrice ?? 0,
+      subtotal: Math.round(newQty * p.price * 100) / 100,
+      pricingType: w ? 'weight' : 'fixed',
+      unit: w ? 'kg' : 'pcs',
+    };
+    const next = cur.some(i => i.productId === p.id) ? cur.map(i => (i.productId === p.id ? line : i)) : [...cur, line];
+    itemsRef.current = next;
+    setItems(next);
+    return true;
+  };
+
   const addItem = () => {
     if (!selected) return;
-    if (!(amount > 0) || amount > available) {
-      toast({ title: 'ভুল পরিমাণ', description: `আছে: ${available} ${unitBn(selected.unit)}`, variant: 'destructive' });
-      return;
+    if (addToCart(selected, amount)) {
+      setSelectedId(''); setSearch(''); setQty('1'); setWeight('');
     }
-    if (!isWeight && !Number.isInteger(amount)) {
-      toast({ title: 'ভুল সংখ্যা', description: 'পূর্ণ সংখ্যা দিন', variant: 'destructive' });
-      return;
-    }
-    const newQty = Math.round((inCart + amount) * 1000) / 1000;
-    const line: SaleItem = {
-      productId: selected.id,
-      productName: selected.name,
-      quantity: newQty,
-      weight: isWeight ? newQty : undefined,
-      price: selected.price,
-      costPrice: selected.costPrice ?? 0,
-      subtotal: Math.round(newQty * selected.price * 100) / 100,
-      pricingType: isWeight ? 'weight' : 'fixed',
-      unit: isWeight ? 'kg' : 'pcs',
-    };
-    setItems(prev => (prev.some(i => i.productId === line.productId)
-      ? prev.map(i => (i.productId === line.productId ? line : i))
-      : [...prev, line]));
-    setSelectedId(''); setSearch(''); setQty('1'); setWeight('');
   };
+
+  // ---- barcode scanning ----
+  const handleScanned = (p: Product) => {
+    if (p.stock <= 0) { setScanMsg({ ok: false, text: `${p.name} — স্টকে নেই` }); return; }
+    if (p.pricingType === 'weight') {
+      // loose goods need a weight: leave the camera and let the shopkeeper type it
+      setScanOpen(false); setSelectedId(p.id); setWeight(''); setQty('1');
+      toast({ title: p.name, description: 'ওজন লিখে "যোগ" চাপুন' });
+      return;
+    }
+    const ok = addToCart(p, 1);
+    setScanMsg(ok ? { ok: true, text: `✓ ${p.name} যোগ হয়েছে` } : { ok: false, text: `${p.name} — আর স্টক নেই` });
+  };
+  const onScan = (code: string) => {
+    const p = products.find(x => x.barcode === code);
+    if (!p) { setUnknownCode(code); return; }
+    handleScanned(p);
+  };
+  const linkBarcode = (p: Product) => {
+    if (!unknownCode) return;
+    updateProduct(p.id, { barcode: unknownCode });
+    toast({ title: 'বারকোড সেভ হয়েছে', description: `${p.name} — পরের বার নিজে চিনবে` });
+    setUnknownCode(null); setLinkSearch('');
+    handleScanned({ ...p, barcode: unknownCode });
+  };
+  const closeScanner = () => { setScanOpen(false); setUnknownCode(null); setScanMsg(null); setLinkSearch(''); };
 
   // customers whose name or phone matches what is being typed (those who owe money come first)
   const typed = custText.trim();
@@ -575,7 +622,12 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
     onClose();
   };
 
+  const linkMatches = products
+    .filter(p => !linkSearch.trim() || p.name.toLowerCase().includes(linkSearch.trim().toLowerCase()))
+    .slice(0, 30);
+
   return (
+    <>
     <Dialog open={open} onOpenChange={o => { if (!o) onClose(); }}>
       <DialogContent className={`${SHEET} sm:max-w-xl`}>
         <DialogHeader><DialogTitle>নতুন বিক্রি</DialogTitle></DialogHeader>
@@ -584,7 +636,17 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
           {/* Product picker */}
           {!selected ? (
             <div className="space-y-2">
-              <SearchBar value={search} onChange={setSearch} placeholder="পণ্য খুঁজুন…" />
+              <div className="flex gap-2">
+                <SearchBar value={search} onChange={setSearch} placeholder="পণ্য খুঁজুন…"
+                  onEnter={() => {
+                    const code = search.trim();
+                    const p = code ? products.find(x => x.barcode === code) : undefined; // a USB/Bluetooth scanner types the code + Enter
+                    if (p) { handleScanned(p); setSearch(''); }
+                  }} />
+                <Button type="button" className={`h-10 shrink-0 ${PRIMARY_BTN}`} aria-label="বারকোড স্ক্যান" onClick={() => setScanOpen(true)}>
+                  <ScanBarcode /> স্ক্যান
+                </Button>
+              </div>
               {saleCategories.length > 1 && (
                 <CategoryChips categories={saleCategories} value={saleCat} onChange={setSaleCat} />
               )}
@@ -782,6 +844,43 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
         </div>
       </DialogContent>
     </Dialog>
+
+    {/* camera scanner: stays open so several products can be scanned one after another */}
+    <BarcodeScanner open={scanOpen && open} onClose={closeScanner} onDetect={onScan} paused={!!unknownCode}>
+      {!unknownCode && scanMsg && (
+        <p className={`rounded-lg px-3 py-2 text-center text-sm font-medium ${scanMsg.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>{scanMsg.text}</p>
+      )}
+      {!unknownCode && items.length > 0 && (
+        <p className="text-center text-xs text-slate-600">কার্টে {items.length}টি পণ্য · সাব-টোটাল {formatCurrency(subtotal)}</p>
+      )}
+      {unknownCode && (
+        <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
+          <p className="text-sm font-semibold">এই বারকোড এখনো চেনা নেই</p>
+          <p className="text-xs text-slate-600">{unknownCode} — কোন পণ্য? বেছে দিন, পরের বার নিজেই চিনবে।</p>
+          <SearchBar value={linkSearch} onChange={setLinkSearch} placeholder="পণ্য খুঁজুন…" />
+          <ul className="max-h-36 divide-y overflow-y-auto rounded-md border bg-white">
+            {linkMatches.length === 0 && <li className="p-3 text-center text-xs text-slate-500">কোনো পণ্য নেই</li>}
+            {linkMatches.map(p => (
+              <li key={p.id}>
+                <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left active:bg-slate-100" onClick={() => linkBarcode(p)}>
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium">{p.name}</span>
+                  <span className="shrink-0 text-[11px] text-slate-500">{formatCurrency(p.price)}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className="grid grid-cols-2 gap-2">
+            <Button type="button" variant="outline" className="h-10" onClick={() => { setUnknownCode(null); setLinkSearch(''); }}>বাদ দিন</Button>
+            <Button type="button" className={`h-10 ${PRIMARY_BTN}`} onClick={() => { setNewProdCode(unknownCode); setUnknownCode(null); setScanOpen(false); }}>নতুন পণ্য বানান</Button>
+          </div>
+        </div>
+      )}
+    </BarcodeScanner>
+
+    {/* a product that is not in the app at all: create it with the scanned barcode, then it goes straight into the cart */}
+    <ProductFormDialog open={!!newProdCode} defaultBarcode={newProdCode} onClose={() => setNewProdCode('')}
+      onSaved={p => handleScanned(p)} />
+    </>
   );
 }
 
@@ -790,24 +889,25 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
 /* ------------------------------------------------------------------ */
 
 function ProductFormDialog({
-  open, onClose, product, defaultCategory,
-}: { open: boolean; onClose: () => void; product?: Product | null; defaultCategory?: string }) {
+  open, onClose, product, defaultCategory, defaultBarcode, onSaved,
+}: { open: boolean; onClose: () => void; product?: Product | null; defaultCategory?: string; defaultBarcode?: string; onSaved?: (p: Product) => void }) {
   const products = useStore(s => s.products);
   const addProduct = useStore(s => s.addProduct);
   const updateProduct = useStore(s => s.updateProduct);
-  const empty = { name: '', price: '', costPrice: '', stock: '', category: '', pricingType: 'fixed' as 'fixed' | 'weight' };
+  const empty = { name: '', price: '', costPrice: '', stock: '', category: '', barcode: '', pricingType: 'fixed' as 'fixed' | 'weight' };
+  const [scanOpen, setScanOpen] = useState(false);
   const [form, setForm] = useState(empty);
 
   useEffect(() => {
     if (!open) return;
     setForm(product
       ? {
-        name: product.name, price: String(product.price), costPrice: product.costPrice ? String(product.costPrice) : '', stock: String(product.stock),
+        name: product.name, price: String(product.price), costPrice: product.costPrice ? String(product.costPrice) : '', barcode: product.barcode || '', stock: String(product.stock),
         category: product.category || '', pricingType: product.pricingType || 'fixed',
       }
-      : { ...empty, category: defaultCategory || '' });
+      : { ...empty, category: defaultCategory || '', barcode: defaultBarcode || '' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, product, defaultCategory]);
+  }, [open, product, defaultCategory, defaultBarcode]);
 
   const categories = useMemo(() => getCategories(products), [products]);
 
@@ -819,8 +919,14 @@ function ProductFormDialog({
       toast({ title: 'ফর্মটি দেখুন', description: 'নাম, দাম ও স্টক দিতে হবে', variant: 'destructive' });
       return;
     }
+    const code = form.barcode.trim();
+    const clash = code ? products.find(p => p.barcode === code && p.id !== product?.id) : undefined;
+    if (clash) {
+      toast({ title: 'এই বারকোড অন্য পণ্যে আছে', description: clash.name, variant: 'destructive' });
+      return;
+    }
     const data = {
-      name: form.name.trim(), price, costPrice, stock,
+      name: form.name.trim(), price, costPrice, stock, barcode: code,
       category: normalizeCategory(form.category, categories),
       pricingType: form.pricingType,
       unit: form.pricingType === 'weight' ? 'kg' : 'pcs',
@@ -829,8 +935,9 @@ function ProductFormDialog({
       updateProduct(product.id, data);
       toast({ title: 'পণ্য আপডেট হয়েছে' });
     } else {
-      addProduct(data);
+      const created = addProduct(data);
       toast({ title: 'পণ্য যোগ হয়েছে' });
+      onSaved?.(created);
     }
     onClose();
   };
@@ -839,6 +946,7 @@ function ProductFormDialog({
   const margin = Number(form.price) > 0 && Number(form.costPrice) > 0 ? Number(form.price) - Number(form.costPrice) : null;
 
   return (
+    <>
     <Dialog open={open} onOpenChange={o => { if (!o) onClose(); }}>
       <DialogContent className={`${SHEET} sm:max-w-md`}>
         <DialogHeader><DialogTitle>{product ? 'পণ্য সম্পাদনা' : 'নতুন পণ্য'}</DialogTitle></DialogHeader>
@@ -880,6 +988,16 @@ function ProductFormDialog({
             <Input id="p-stock" inputMode="decimal" className="h-11" value={form.stock}
               onChange={e => setForm({ ...form, stock: e.target.value })} />
           </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="p-barcode">বারকোড (ঐচ্ছিক)</Label>
+            <div className="flex gap-2">
+              <Input id="p-barcode" inputMode="numeric" className="h-11" placeholder="স্ক্যান করুন বা লিখুন"
+                value={form.barcode} onChange={e => setForm({ ...form, barcode: e.target.value })} />
+              <Button type="button" variant="outline" className="h-11 shrink-0" aria-label="বারকোড স্ক্যান" onClick={() => setScanOpen(true)}>
+                <ScanBarcode />
+              </Button>
+            </div>
+          </div>
 
           <div className="space-y-1.5">
             <Label htmlFor="p-cat">ক্যাটাগরি</Label>
@@ -905,6 +1023,9 @@ function ProductFormDialog({
         </form>
       </DialogContent>
     </Dialog>
+    <BarcodeScanner open={scanOpen} onClose={() => setScanOpen(false)} title="পণ্যের বারকোড স্ক্যান"
+      onDetect={code => { setForm(f => ({ ...f, barcode: code })); setScanOpen(false); }} />
+    </>
   );
 }
 

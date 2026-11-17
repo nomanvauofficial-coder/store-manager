@@ -111,7 +111,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
       const cust = (id?: string) => st.customers.find(c => c.id === id)?.name ?? '';
 
       add('পণ্য', st.products.map(p => ({
-        'নাম': p.name, 'ক্যাটাগরি': p.category, 'ধরন': p.pricingType === 'weight' ? 'কেজি দরে' : 'পিস দরে',
+        'নাম': p.name, 'বারকোড': p.barcode ?? '', 'ক্যাটাগরি': p.category, 'ধরন': p.pricingType === 'weight' ? 'কেজি দরে' : 'পিস দরে',
         'কেনা দাম': p.costPrice ?? 0, 'বিক্রির দাম': p.price, 'স্টক': p.stock, 'একক': unitBn(p.unit),
       })));
       add('কাস্টমার', st.customers.map(c => ({

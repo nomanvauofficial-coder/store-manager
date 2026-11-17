@@ -4,6 +4,7 @@ export interface Product {
   name: string;
   price: number; // Selling price per unit (per item or per kg)
   costPrice?: number; // Buying price per unit (0 / missing = not set)
+  barcode?: string; // printed barcode of the product (empty = not linked yet)
   stock: number; // Stock in units or kg
   category: string;
   pricingType: 'fixed' | 'weight'; // Fixed price or weight-based
