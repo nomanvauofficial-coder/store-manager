@@ -68,6 +68,7 @@ import {
 } from '@/components/shared';
 import { ReturnDialog, ReturnsList } from '@/components/returns';
 import { BarcodeScanner } from '@/components/scanner';
+import { lookupBarcode, useBarcodeLookup } from '@/lib/barcode-lookup';
 import { BackupBanner, SettingsDialog, SyncChip } from '@/components/backup';
 import { InvoiceDialog, buildSaleInvoice, buildStatement, customerBalanceAt, type InvoiceDoc } from '@/components/invoice';
 import { SupplierModule } from '@/components/suppliers';
@@ -468,6 +469,9 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
   const [unknownCode, setUnknownCode] = useState<string | null>(null);
   const [linkSearch, setLinkSearch] = useState('');
   const [newProdCode, setNewProdCode] = useState('');
+  const [newProdName, setNewProdName] = useState('');
+  const [newProdSource, setNewProdSource] = useState('');
+  const lookup = useBarcodeLookup(unknownCode);
   const [items, setItems] = useState<SaleItem[]>([]);
   const [search, setSearch] = useState('');
   const [saleCat, setSaleCat] = useState('');
@@ -484,7 +488,7 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
     if (!open) {
       setItems([]); setSearch(''); setSaleCat(''); setSelectedId(''); setQty('1'); setWeight('');
       setDiscount(''); setPaidInput(null); setCustomerId(''); setCustText(''); setNewPhone('');
-      setScanOpen(false); setScanMsg(null); setUnknownCode(null); setLinkSearch(''); setNewProdCode('');
+      setScanOpen(false); setScanMsg(null); setUnknownCode(null); setLinkSearch(''); setNewProdCode(''); setNewProdName(''); setNewProdSource('');
     }
   }, [open]);
 
@@ -856,7 +860,21 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
       {unknownCode && (
         <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
           <p className="text-sm font-semibold">এই বারকোড এখনো চেনা নেই</p>
-          <p className="text-xs text-slate-600">{unknownCode} — কোন পণ্য? বেছে দিন, পরের বার নিজেই চিনবে।</p>
+          <p className="text-xs text-slate-600">{unknownCode}</p>
+          {lookup.status === 'loading' && <p className="text-xs text-slate-500">অনলাইনে নাম খোঁজা হচ্ছে…</p>}
+          {lookup.status === 'found' && (
+            <div className="space-y-1.5 rounded-md border border-emerald-200 bg-emerald-50 p-2.5">
+              <p className="text-[11px] text-emerald-700">অনলাইনে পাওয়া গেছে ({lookup.info.source})</p>
+              <p className="text-sm font-semibold">{lookup.info.name}</p>
+              <Button type="button" className="h-10 w-full bg-emerald-600 text-white hover:bg-emerald-700"
+                onClick={() => { setNewProdCode(unknownCode); setNewProdName(lookup.info.name); setNewProdSource(lookup.info.source); setUnknownCode(null); setScanOpen(false); }}>
+                এই নামে নতুন পণ্য বানান
+              </Button>
+            </div>
+          )}
+          {lookup.status === 'none' && <p className="text-xs text-slate-500">অনলাইনে এই বারকোডের নাম পাওয়া যায়নি।</p>}
+          {lookup.status === 'offline' && <p className="text-xs text-slate-500">ইন্টারনেট নেই, তাই অনলাইনে নাম খোঁজা যায়নি।</p>}
+          <p className="text-xs text-slate-600">পণ্যটা তালিকায় থাকলে নিচ থেকে বেছে দিন, পরের বার নিজেই চিনবে।</p>
           <SearchBar value={linkSearch} onChange={setLinkSearch} placeholder="পণ্য খুঁজুন…" />
           <ul className="max-h-36 divide-y overflow-y-auto rounded-md border bg-white">
             {linkMatches.length === 0 && <li className="p-3 text-center text-xs text-slate-500">কোনো পণ্য নেই</li>}
@@ -878,7 +896,8 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
     </BarcodeScanner>
 
     {/* a product that is not in the app at all: create it with the scanned barcode, then it goes straight into the cart */}
-    <ProductFormDialog open={!!newProdCode} defaultBarcode={newProdCode} onClose={() => setNewProdCode('')}
+    <ProductFormDialog open={!!newProdCode} defaultBarcode={newProdCode} defaultName={newProdName} nameSource={newProdSource}
+      onClose={() => { setNewProdCode(''); setNewProdName(''); setNewProdSource(''); }}
       onSaved={p => handleScanned(p)} />
     </>
   );
@@ -889,13 +908,14 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
 /* ------------------------------------------------------------------ */
 
 function ProductFormDialog({
-  open, onClose, product, defaultCategory, defaultBarcode, onSaved,
-}: { open: boolean; onClose: () => void; product?: Product | null; defaultCategory?: string; defaultBarcode?: string; onSaved?: (p: Product) => void }) {
+  open, onClose, product, defaultCategory, defaultBarcode, defaultName, nameSource, onSaved,
+}: { open: boolean; onClose: () => void; product?: Product | null; defaultCategory?: string; defaultBarcode?: string; defaultName?: string; nameSource?: string; onSaved?: (p: Product) => void }) {
   const products = useStore(s => s.products);
   const addProduct = useStore(s => s.addProduct);
   const updateProduct = useStore(s => s.updateProduct);
   const empty = { name: '', price: '', costPrice: '', stock: '', category: '', barcode: '', pricingType: 'fixed' as 'fixed' | 'weight' };
   const [scanOpen, setScanOpen] = useState(false);
+  const [nameNote, setNameNote] = useState('');
   const [form, setForm] = useState(empty);
 
   useEffect(() => {
@@ -905,9 +925,10 @@ function ProductFormDialog({
         name: product.name, price: String(product.price), costPrice: product.costPrice ? String(product.costPrice) : '', barcode: product.barcode || '', stock: String(product.stock),
         category: product.category || '', pricingType: product.pricingType || 'fixed',
       }
-      : { ...empty, category: defaultCategory || '', barcode: defaultBarcode || '' });
+      : { ...empty, name: defaultName || '', category: defaultCategory || '', barcode: defaultBarcode || '' });
+    setNameNote(!product && defaultName && nameSource ? `নামটি ${nameSource} থেকে এসেছে। ঠিক না হলে বদলে নিন।` : '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, product, defaultCategory, defaultBarcode]);
+  }, [open, product, defaultCategory, defaultBarcode, defaultName]);
 
   const categories = useMemo(() => getCategories(products), [products]);
 
@@ -953,7 +974,8 @@ function ProductFormDialog({
         <form className="space-y-3" onSubmit={e => { e.preventDefault(); submit(); }}>
           <div className="space-y-1.5">
             <Label htmlFor="p-name">নাম *</Label>
-            <Input id="p-name" className="h-11" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
+            <Input id="p-name" className="h-11" value={form.name} onChange={e => { setForm({ ...form, name: e.target.value }); setNameNote(''); }} />
+            {nameNote && <p className="text-[11px] text-emerald-700">{nameNote}</p>}
           </div>
 
           <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1">
@@ -1024,7 +1046,18 @@ function ProductFormDialog({
       </DialogContent>
     </Dialog>
     <BarcodeScanner open={scanOpen} onClose={() => setScanOpen(false)} title="পণ্যের বারকোড স্ক্যান"
-      onDetect={code => { setForm(f => ({ ...f, barcode: code })); setScanOpen(false); }} />
+      onDetect={code => {
+        setForm(f => ({ ...f, barcode: code }));
+        setScanOpen(false);
+        if (!form.name.trim()) {
+          void lookupBarcode(code).then(r => {
+            if (!r.info) return;
+            const found = r.info;
+            setForm(f => (f.name.trim() ? f : { ...f, name: found.name }));
+            setNameNote(`নামটি ${found.source} থেকে এসেছে। ঠিক না হলে বদলে নিন।`);
+          });
+        }
+      }} />
     </>
   );
 }
