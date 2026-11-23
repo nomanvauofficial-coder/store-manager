@@ -28,7 +28,7 @@ import { Toaster } from '@/components/ui/toaster';
 import {
   ShoppingCart, Package, TrendingUp, Plus, Minus, Trash2, Pencil, Search, CreditCard,
   Wallet, Receipt, AlertCircle, X, Scale, Home as HomeIcon, Users, BarChart3, Phone,
-  Banknote, Settings, Truck, Printer, Undo2, ScanBarcode, type LucideIcon,
+  Banknote, Settings, Truck, Printer, Undo2, ScanBarcode, FileUp, Percent, type LucideIcon,
 } from 'lucide-react';
 import {
   BarChart as RechartsBar, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -64,10 +64,11 @@ import {
   CategoryChips,
   TONES,
   StatCard,
-  saleDue, itemProfit, profitOf, useSupplierDues, todayStr, dateStrToIso, DateField, buildLedger, Ledger, saleLines,
+  weightLabel, suggestTender, saleDue, itemProfit, profitOf, useSupplierDues, todayStr, dateStrToIso, DateField, buildLedger, Ledger, saleLines,
 } from '@/components/shared';
 import { ReturnDialog, ReturnsList } from '@/components/returns';
 import { BarcodeScanner } from '@/components/scanner';
+import { BulkPriceDialog, ImportDialog } from '@/components/product-tools';
 import { lookupBarcode, useBarcodeLookup } from '@/lib/barcode-lookup';
 import { BackupBanner, SettingsDialog, SyncChip } from '@/components/backup';
 import { InvoiceDialog, buildSaleInvoice, buildStatement, customerBalanceAt, type InvoiceDoc } from '@/components/invoice';
@@ -468,6 +469,8 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
   const [scanMsg, setScanMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [unknownCode, setUnknownCode] = useState<string | null>(null);
   const [linkSearch, setLinkSearch] = useState('');
+  const [weightMode, setWeightMode] = useState<'kg' | 'taka'>('kg'); // loose goods: ask by weight or by money
+  const [money, setMoney] = useState('');
   const [newProdCode, setNewProdCode] = useState('');
   const [newProdName, setNewProdName] = useState('');
   const [newProdSource, setNewProdSource] = useState('');
@@ -488,7 +491,7 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
     if (!open) {
       setItems([]); setSearch(''); setSaleCat(''); setSelectedId(''); setQty('1'); setWeight('');
       setDiscount(''); setPaidInput(null); setCustomerId(''); setCustText(''); setNewPhone('');
-      setScanOpen(false); setScanMsg(null); setUnknownCode(null); setLinkSearch(''); setNewProdCode(''); setNewProdName(''); setNewProdSource('');
+      setScanOpen(false); setScanMsg(null); setUnknownCode(null); setLinkSearch(''); setNewProdCode(''); setNewProdName(''); setNewProdSource(''); setMoney('');
     }
   }, [open]);
 
@@ -496,11 +499,18 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
   const isWeight = selected?.pricingType === 'weight';
   const inCart = items.find(i => i.productId === selectedId)?.quantity ?? 0;
   const available = selected ? Math.round((selected.stock - inCart) * 1000) / 1000 : 0;
-  const amount = Number(isWeight ? weight : qty);
+  const moneyN = Number(money);
+  // "৫০ টাকার চাল": the app works out how much to weigh
+  const kgFromMoney = selected && isWeight && moneyN > 0 && selected.price > 0 ? Math.round((moneyN / selected.price) * 1000) / 1000 : 0;
+  const byMoney = isWeight && weightMode === 'taka';
+  const amount = isWeight ? (byMoney ? kgFromMoney : Number(weight)) : Number(qty);
   const subtotal = Math.round(items.reduce((sum, i) => sum + i.subtotal, 0) * 100) / 100;
   const discountN = Math.min(Math.max(Number(discount) || 0, 0), subtotal);
   const total = Math.round((subtotal - discountN) * 100) / 100; // bill after discount
-  const paidN = paidInput === null ? total : Math.min(Math.max(Number(paidInput) || 0, 0), total);
+  // what the customer hands over: more than the bill means change to give back
+  const tenderedN = paidInput === null ? total : Math.max(Number(paidInput) || 0, 0);
+  const paidN = Math.min(tenderedN, total);
+  const changeN = Math.round((tenderedN - total) * 100) / 100; // > 0: give this back
   const dueN = Math.round((total - paidN) * 100) / 100; // still to be paid later
 
   const matches = useMemo(() => {
@@ -517,7 +527,7 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
   // one place that puts a product into the cart (used by tapping and by scanning)
   const itemsRef = useRef(items);
   itemsRef.current = items;
-  const addToCart = (p: Product, amt: number): boolean => {
+  const addToCart = (p: Product, amt: number, exactSubtotal?: number): boolean => {
     const cur = itemsRef.current;
     const w = p.pricingType === 'weight';
     const inC = cur.find(i => i.productId === p.id)?.quantity ?? 0;
@@ -538,7 +548,8 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
       weight: w ? newQty : undefined,
       price: p.price,
       costPrice: p.costPrice ?? 0,
-      subtotal: Math.round(newQty * p.price * 100) / 100,
+      // lines are added up part by part, so "৫০ টাকার চাল" stays exactly ৳50
+      subtotal: Math.round(((cur.find(i => i.productId === p.id)?.subtotal ?? 0) + (exactSubtotal ?? amt * p.price)) * 100) / 100,
       pricingType: w ? 'weight' : 'fixed',
       unit: w ? 'kg' : 'pcs',
     };
@@ -550,8 +561,8 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
 
   const addItem = () => {
     if (!selected) return;
-    if (addToCart(selected, amount)) {
-      setSelectedId(''); setSearch(''); setQty('1'); setWeight('');
+    if (addToCart(selected, amount, byMoney ? moneyN : undefined)) {
+      setSelectedId(''); setSearch(''); setQty('1'); setWeight(''); setMoney('');
     }
   };
 
@@ -621,10 +632,24 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
     });
     toast({
       title: 'বিক্রি সম্পন্ন',
-      description: dueN > 0 ? `বিল ${formatCurrency(total)} · বাকি ${formatCurrency(dueN)}` : formatCurrency(total),
+      description: dueN > 0 ? `বিল ${formatCurrency(total)} · বাকি ${formatCurrency(dueN)}` : changeN > 0 ? `বিল ${formatCurrency(total)} · ফেরত দিন ${formatCurrency(changeN)}` : formatCurrency(total),
     });
     onClose();
   };
+
+  // the products sold most often in the last 3 months: one tap and they are in the cart
+  const sales = useStore(s => s.sales);
+  const frequent = useMemo(() => {
+    const cutoff = Date.now() - 90 * 86400000;
+    const count: Record<string, number> = {};
+    sales.forEach(sl => {
+      if (new Date(sl.createdAt).getTime() >= cutoff) sl.items.forEach(i => { count[i.productId] = (count[i.productId] || 0) + 1; });
+    });
+    return products
+      .filter(p => p.stock > 0 && count[p.id])
+      .sort((a, b) => count[b.id] - count[a.id] || a.name.localeCompare(b.name))
+      .slice(0, 12);
+  }, [sales, products]);
 
   const linkMatches = products
     .filter(p => !linkSearch.trim() || p.name.toLowerCase().includes(linkSearch.trim().toLowerCase()))
@@ -654,13 +679,37 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
               {saleCategories.length > 1 && (
                 <CategoryChips categories={saleCategories} value={saleCat} onChange={setSaleCat} />
               )}
+              {frequent.length > 0 && !search.trim() && !saleCat && (
+                <div className="space-y-1.5">
+                  <p className="text-[11px] font-medium text-slate-500">বেশি বিক্রি হয় · ট্যাপ করলেই কার্টে</p>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {frequent.map(p => {
+                      const inBasket = items.find(i => i.productId === p.id);
+                      return (
+                        <button key={p.id} type="button" aria-label={`দ্রুত যোগ ${p.name}`}
+                          onClick={() => {
+                            if (p.pricingType === 'weight') { setSelectedId(p.id); setQty('1'); setWeight(''); setMoney(''); }
+                            else addToCart(p, 1);
+                          }}
+                          className="relative flex min-h-[3.4rem] flex-col items-center justify-center rounded-lg border bg-white px-1.5 py-1.5 text-center active:bg-blue-50">
+                          <span className="line-clamp-2 text-xs font-medium leading-tight">{p.name}</span>
+                          <span className="mt-0.5 text-[11px] text-slate-500">{formatCurrency(p.price)}{p.pricingType === 'weight' && '/কেজি'}</span>
+                          {inBasket && p.pricingType !== 'weight' && (
+                            <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-700 px-1 text-[10px] font-bold text-white">{inBasket.quantity}</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               <div className="max-h-44 divide-y overflow-y-auto rounded-lg border">
                 {matches.length === 0 ? (
                   <p className="p-4 text-center text-sm text-slate-500">স্টকে কোনো পণ্য নেই</p>
                 ) : matches.map(p => (
                   <button
                     key={p.id}
-                    onClick={() => { setSelectedId(p.id); setQty('1'); setWeight(''); }}
+                    onClick={() => { setSelectedId(p.id); setQty('1'); setWeight(''); setMoney(''); }}
                     className="flex w-full items-center gap-2 px-3 py-2.5 text-left active:bg-slate-100"
                   >
                     {p.pricingType === 'weight' && <Scale className="h-3.5 w-3.5 shrink-0 text-blue-600" />}
@@ -687,21 +736,54 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
 
               {isWeight ? (
                 <div className="space-y-2">
-                  <div className="flex gap-2">
-                    <Input
-                      inputMode="decimal" placeholder="ওজন (কেজি)" aria-label="ওজন কেজিতে"
-                      value={weight} onChange={e => setWeight(e.target.value)} className="h-11 flex-1"
-                    />
-                    <Button onClick={addItem} disabled={!(amount > 0)} className={`h-11 px-5 ${PRIMARY_BTN}`}>যোগ</Button>
-                  </div>
-                  <div className="flex gap-1.5">
-                    {['0.25', '0.5', '1', '2'].map(w => (
-                      <button key={w} onClick={() => setWeight(w)}
-                        className="h-8 flex-1 rounded-md border bg-white text-xs font-medium active:bg-slate-100">
-                        {w} কেজি
-                      </button>
+                  <div className="grid grid-cols-2 gap-1 rounded-md border bg-white p-0.5" role="tablist">
+                    {([['kg', 'কেজি / গ্রাম'], ['taka', 'টাকার অঙ্কে']] as const).map(([id, label]) => (
+                      <button key={id} type="button" role="tab" aria-selected={weightMode === id} onClick={() => setWeightMode(id)}
+                        className={`h-8 rounded text-xs font-medium ${weightMode === id ? 'bg-blue-700 text-white' : 'text-slate-600'}`}>{label}</button>
                     ))}
                   </div>
+                  {weightMode === 'kg' ? (
+                    <>
+                      <div className="flex gap-2">
+                        <Input
+                          inputMode="decimal" placeholder="ওজন (কেজি)" aria-label="ওজন কেজিতে"
+                          value={weight} onChange={e => setWeight(e.target.value)} className="h-11 flex-1"
+                        />
+                        <Button onClick={addItem} disabled={!(amount > 0)} className={`h-11 px-5 ${PRIMARY_BTN}`}>যোগ</Button>
+                      </div>
+                      <div className="flex gap-1.5">
+                        {['0.25', '0.5', '1', '2'].map(w => (
+                          <button key={w} onClick={() => setWeight(w)}
+                            className="h-8 flex-1 rounded-md border bg-white text-xs font-medium active:bg-slate-100">
+                            {weightLabel(Number(w))}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex gap-2">
+                        <Input
+                          inputMode="decimal" placeholder="কত টাকার?" aria-label="টাকার অঙ্ক"
+                          value={money} onChange={e => setMoney(e.target.value)} className="h-11 flex-1"
+                        />
+                        <Button onClick={addItem} disabled={!(amount > 0)} className={`h-11 px-5 ${PRIMARY_BTN}`}>যোগ</Button>
+                      </div>
+                      <div className="flex gap-1.5">
+                        {['10', '20', '50', '100'].map(m => (
+                          <button key={m} onClick={() => setMoney(m)}
+                            className="h-8 flex-1 rounded-md border bg-white text-xs font-medium active:bg-slate-100">
+                            ৳{m}
+                          </button>
+                        ))}
+                      </div>
+                      {kgFromMoney > 0 && (
+                        <p className="rounded-md bg-white px-3 py-2 text-center text-sm font-semibold text-blue-800">
+                          ওজন করুন: {weightLabel(kgFromMoney)}
+                        </p>
+                      )}
+                    </>
+                  )}
                 </div>
               ) : (
                 <div className="flex items-center gap-2">
@@ -725,7 +807,7 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
                   </Button>
                 </div>
               )}
-              {isWeight && amount > 0 && (
+              {isWeight && !byMoney && amount > 0 && (
                 <p className="text-right text-xs text-slate-600">= {formatCurrency(amount * selected.price)}</p>
               )}
             </div>
@@ -739,7 +821,7 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">{item.productName}</p>
                     <p className="text-xs text-slate-500">
-                      {item.pricingType === 'weight' ? `${item.weight} কেজি` : `${item.quantity} পিস`} × {formatCurrency(item.price)}
+                      {item.pricingType === 'weight' ? weightLabel(item.weight ?? item.quantity) : `${item.quantity} পিস`} × {formatCurrency(item.price)}
                     </p>
                   </div>
                   <span className="text-sm font-semibold">{formatCurrency(item.subtotal)}</span>
@@ -770,7 +852,7 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
               </div>
 
               <div className="space-y-1.5 border-t pt-2">
-                <Label htmlFor="sale-paid" className="text-sm text-slate-600">এখন কত টাকা পেলেন?</Label>
+                <Label htmlFor="sale-paid" className="text-sm text-slate-600">ক্রেতা কত টাকা দিল?</Label>
                 <div className="flex gap-2">
                   <Input id="sale-paid" inputMode="decimal" className="h-11"
                     value={paidInput === null ? String(total) : paidInput}
@@ -780,6 +862,23 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
                   <Button type="button" variant={paidInput === '0' ? 'default' : 'outline'} className="h-11 shrink-0"
                     onClick={() => setPaidInput('0')}>বাকি</Button>
                 </div>
+                {/* common notes: tap what the customer hands over */}
+                {total > 0 && suggestTender(total).length > 0 && (
+                  <div className="flex gap-1.5">
+                    {suggestTender(total).map(v => (
+                      <button key={v} type="button" onClick={() => setPaidInput(String(v))}
+                        className={`h-8 flex-1 rounded-md border text-xs font-medium active:bg-slate-100 ${paidInput === String(v) ? 'border-blue-700 bg-blue-50 text-blue-800' : 'bg-white'}`}>
+                        ৳{v}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {changeN > 0 && (
+                  <div className="flex items-center justify-between rounded-lg bg-emerald-50 px-3 py-2.5">
+                    <span className="text-sm font-medium text-emerald-800">ফেরত দিন</span>
+                    <span className="text-2xl font-bold text-emerald-700">{formatCurrency(changeN)}</span>
+                  </div>
+                )}
                 {dueN > 0 && (
                   <p className="text-xs font-medium text-red-600">এই বিক্রিতে বাকি থাকবে {formatCurrency(dueN)}</p>
                 )}
@@ -837,9 +936,9 @@ function NewSaleDialog({ open, onClose }: { open: boolean; onClose: () => void }
         {/* Sticky total + action */}
         <div className="sticky bottom-0 -mx-4 flex items-center gap-3 border-t bg-white px-4 pt-3 sm:mx-0 sm:px-0">
           <div className="leading-tight">
-            <p className="text-[11px] text-slate-500">{dueN > 0 ? `পাবেন ${formatCurrency(paidN)}` : 'মোট বিল'}</p>
-            <p className={`text-xl font-bold ${dueN > 0 ? 'text-red-600' : 'text-emerald-700'}`}>
-              {dueN > 0 ? `বাকি ${formatCurrency(dueN)}` : formatCurrency(total)}
+            <p className="text-[11px] text-slate-500">{dueN > 0 ? `পাবেন ${formatCurrency(paidN)}` : changeN > 0 ? `বিল ${formatCurrency(total)} · ফেরত দিন` : 'মোট বিল'}</p>
+            <p className={`text-xl font-bold ${dueN > 0 ? 'text-red-600' : changeN > 0 ? 'text-blue-700' : 'text-emerald-700'}`}>
+              {dueN > 0 ? `বাকি ${formatCurrency(dueN)}` : changeN > 0 ? formatCurrency(changeN) : formatCurrency(total)}
             </p>
           </div>
           <Button onClick={handleSubmit} disabled={items.length === 0} className="h-11 flex-1 bg-emerald-600 text-white hover:bg-emerald-700">
@@ -1071,6 +1170,8 @@ function ProductManagement() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
   const [cat, setCat] = useState('');
+  const [importOpen, setImportOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   const categories = useMemo(() => getCategories(products), [products]);
   const counts = useMemo(() => {
@@ -1096,6 +1197,11 @@ function ProductManagement() {
       <div className="flex gap-2">
         <SearchBar value={search} onChange={setSearch} placeholder="পণ্য খুঁজুন…" />
         <Button onClick={openAdd} className={`h-10 shrink-0 ${PRIMARY_BTN}`}><Plus /> <span className="max-sm:hidden">{activeCat ? `${activeCat}-এ যোগ` : 'পণ্য যোগ'}</span><span className="sm:hidden">যোগ</span></Button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <Button variant="outline" className="h-9 text-xs" onClick={() => setImportOpen(true)}><FileUp /> Excel থেকে তুলুন</Button>
+        <Button variant="outline" className="h-9 text-xs" onClick={() => setBulkOpen(true)} disabled={products.length === 0}><Percent /> সব দাম বদলান</Button>
       </div>
 
       {categories.length > 0 && (
@@ -1180,6 +1286,8 @@ function ProductManagement() {
       </Card>
 
       <ProductFormDialog open={formOpen} onClose={() => setFormOpen(false)} product={editing} defaultCategory={activeCat} />
+      <ImportDialog open={importOpen} onClose={() => setImportOpen(false)} />
+      <BulkPriceDialog open={bulkOpen} onClose={() => setBulkOpen(false)} />
       <ConfirmDialog
         open={!!deleteId} title="পণ্য মুছবেন?" description="এটি আর ফেরানো যাবে না।"
         onCancel={() => setDeleteId(null)}

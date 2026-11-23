@@ -378,10 +378,21 @@ export interface InvoiceLine {
   subtotal: number;
 }
 
+// 0.714 kg -> "714 গ্রাম", 2.5 kg -> "2.5 কেজি"
+export const weightLabel = (kg: number) => (kg < 1 ? `${Math.round(kg * 1000)} গ্রাম` : `${kg} কেজি`);
+
+// notes the customer may hand over for a bill, e.g. 380 -> 400, 500, 1000
+export function suggestTender(total: number): number[] {
+  if (!(total > 0)) return [];
+  const out = new Set<number>();
+  [10, 50, 100, 500, 1000].forEach(step => { const v = Math.ceil(total / step) * step; if (v > total) out.add(v); });
+  return [...out].sort((a, b) => a - b).slice(0, 4);
+}
+
 export const saleLines = (sale: Sale): InvoiceLine[] =>
   sale.items.map(i => ({
     name: i.productName,
-    qty: `${i.quantity} ${i.pricingType === 'weight' ? 'কেজি' : 'পিস'}`,
+    qty: i.pricingType === 'weight' ? weightLabel(i.quantity) : `${i.quantity} পিস`,
     price: i.price,
     subtotal: i.subtotal,
   }));

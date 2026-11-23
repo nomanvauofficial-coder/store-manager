@@ -114,6 +114,7 @@ export const isRetryable = (e: any) => {
 type Op =
   | { t: 'insert'; table: string; row: Row }
   | { t: 'upsert'; table: string; row: Row }
+  | { t: 'upsertMany'; table: string; rows: Row[] }
   | { t: 'update'; table: string; id: string; row: Row }
   | { t: 'delete'; table: string; id: string }
   | { t: 'rpc'; fn: string; args: Row };
@@ -125,6 +126,7 @@ const runOp = async (op: Op): Promise<{ message: string; code?: string } | null>
     switch (op.t) {
       case 'insert': res = await supabase.from(op.table).insert(op.row); break;
       case 'upsert': res = await supabase.from(op.table).upsert(op.row); break;
+      case 'upsertMany': res = await supabase.from(op.table).upsert(op.rows); break;
       case 'update': res = await supabase.from(op.table).update(op.row).eq('id', op.id); break;
       case 'delete': res = await supabase.from(op.table).delete().eq('id', op.id); break;
       case 'rpc': res = await supabase.rpc(op.fn, op.args); break;
@@ -161,6 +163,7 @@ interface StoreState {
   addProduct: (product: Omit<Product, 'id' | 'createdAt' | 'updatedAt'>) => Product;
   updateProduct: (id: string, product: Partial<Product>) => void;
   deleteProduct: (id: string) => void;
+  upsertProducts: (list: Product[]) => void; // add new / update existing, many at once (Excel import, price change)
 
   addCustomer: (customer: Omit<Customer, 'id' | 'createdAt'>) => Customer;
   updateCustomer: (id: string, customer: Partial<Customer>) => void;
@@ -388,6 +391,21 @@ export const useStore = create<StoreState>((set, get) => {
     deleteProduct: id => {
       set({ products: get().products.filter(p => p.id !== id) });
       enqueue({ t: 'delete', table: 'products', id }, ['products']);
+    },
+    upsertProducts: list => {
+      if (list.length === 0) return;
+      const now = new Date().toISOString();
+      // every row gets ALL fields, so the database never receives a half-filled row
+      const full = list.map(p => ({
+        ...p, costPrice: p.costPrice ?? 0, barcode: p.barcode ?? '', category: p.category || 'General',
+        createdAt: p.createdAt || now, updatedAt: now,
+      }));
+      const byId = new Map(get().products.map(p => [p.id, p] as const));
+      full.forEach(p => byId.set(p.id, p));
+      set({ products: [...byId.values()] });
+      for (let i = 0; i < full.length; i += 300) {
+        enqueue({ t: 'upsertMany', table: 'products', rows: full.slice(i, i + 300).map(fromProduct) }, ['products']);
+      }
     },
 
     /* ---- customers ---- */
