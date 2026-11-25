@@ -40,6 +40,9 @@ import {
 /* ------------------------------------------------------------------ */
 
 export const PERIOD_BN = { daily: 'দৈনিক', weekly: 'সাপ্তাহিক', monthly: 'মাসিক', yearly: 'বার্ষিক' } as const;
+// 1234567 -> "1.2M" (short numbers on chart axes, so they are never cut off)
+export const compactNum = (v: number) => new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(v);
+
 export const COLORS = ['#1d4ed8', '#0d9488', '#d97706', '#dc2626', '#64748b', '#0891b2'];
 export const LOW_STOCK = 5;
 
@@ -58,7 +61,8 @@ export const formatCurrency = (amount: number) =>
 // Mobile: the sheet hugs the TOP of the visible area and shrinks when the keyboard opens,
 // so the form and its buttons never hide behind the keyboard.
 export const SHEET =
-  'bg-white p-4 sm:p-6 sm:max-h-[90dvh] overflow-y-auto overscroll-contain ' +
+  // grid-cols-[minmax(0,1fr)]: a long row inside (many category chips, a long name) may scroll or wrap, but must never make the whole dialog wider than the screen
+  'bg-white p-4 sm:p-6 sm:max-h-[90dvh] overflow-y-auto overflow-x-hidden overscroll-contain grid-cols-[minmax(0,1fr)] ' +
   'max-sm:top-[calc(var(--vvt,0px)+8px)] max-sm:bottom-auto max-sm:left-2 max-sm:right-2 ' +
   'max-sm:w-auto max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 ' +
   'max-sm:max-h-[calc(var(--vvh,100dvh)-16px)] max-sm:rounded-2xl max-sm:pb-3';
@@ -228,7 +232,7 @@ export function ConfirmDialog({
 
 export function SearchBar({ value, onChange, placeholder, onEnter }: { value: string; onChange: (v: string) => void; placeholder: string; onEnter?: () => void }) {
   return (
-    <div className="relative flex-1">
+    <div className="relative min-w-0 flex-1">
       <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
       <Input
         type="search"
@@ -435,10 +439,13 @@ export function Ledger({ entries, emptyText }: { entries: (LedgerRow & { balance
             {e.lines && e.lines.length > 0 && (
               <ul className="mt-1 space-y-0.5 rounded-md bg-slate-50 px-2 py-1.5">
                 {e.lines.map((l, idx) => (
-                  <li key={idx} className="flex items-baseline justify-between gap-2 text-[11px] text-slate-600">
-                    <span className="min-w-0 flex-1 truncate font-medium text-slate-700">{l.name}</span>
-                    <span className="shrink-0">{l.qty} × {formatCurrency(l.price)}</span>
-                    <span className="w-16 shrink-0 text-right font-semibold text-slate-800">{formatCurrency(l.subtotal)}</span>
+                  <li key={idx} className="text-[11px] text-slate-600">
+                    {/* name on its own line so it is never squeezed out on a small screen */}
+                    <p className="break-words font-medium text-slate-700">{l.name}</p>
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="min-w-0">{l.qty} × {formatCurrency(l.price)}</span>
+                      <span className="shrink-0 font-semibold text-slate-800">{formatCurrency(l.subtotal)}</span>
+                    </div>
                   </li>
                 ))}
               </ul>

@@ -64,7 +64,7 @@ import {
   CategoryChips,
   TONES,
   StatCard,
-  weightLabel, suggestTender, saleDue, itemProfit, profitOf, useSupplierDues, todayStr, dateStrToIso, DateField, buildLedger, Ledger, saleLines,
+  compactNum, weightLabel, suggestTender, saleDue, itemProfit, profitOf, useSupplierDues, todayStr, dateStrToIso, DateField, buildLedger, Ledger, saleLines,
 } from '@/components/shared';
 import { ReturnDialog, ReturnsList } from '@/components/returns';
 import { BarcodeScanner } from '@/components/scanner';
@@ -288,31 +288,35 @@ function SalesList({
     <>
       <ul className="divide-y sm:hidden">
         {sales.map(sale => (
-          <li key={sale.id} className="flex items-center gap-2 px-3 py-2.5">
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">{saleSummary(sale)}</p>
-              <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500">
-                {fmt(new Date(sale.createdAt), 'MMM d, h:mm a')}
-                <PaymentBadge sale={sale} />
-                {sale.customerName && <span className="truncate">· {sale.customerName}</span>}
-              </p>
+          <li key={sale.id} className="px-3 py-2.5">
+            <div className="flex items-start justify-between gap-2">
+              <p className="line-clamp-2 min-w-0 flex-1 break-words text-sm font-medium">{saleSummary(sale)}</p>
+              <span className="shrink-0 text-sm font-semibold text-emerald-600">{formatCurrency(sale.total)}</span>
             </div>
-            <span className="text-sm font-semibold text-emerald-600">{formatCurrency(sale.total)}</span>
-            {onInvoice && (
-              <Button variant="ghost" size="icon" className="h-10 w-10 shrink-0" aria-label="ইনভয়েস" onClick={() => onInvoice(sale)}>
-                <Printer className="h-4 w-4 text-blue-700" />
-              </Button>
-            )}
-            {onReturn && (
-              <Button variant="ghost" size="icon" className="h-10 w-10 shrink-0" aria-label="পণ্য ফেরত" onClick={() => onReturn(sale)}>
-                <Undo2 className="h-4 w-4 text-amber-600" />
-              </Button>
-            )}
-            {onDelete && (
-              <Button variant="ghost" size="icon" className="h-10 w-10 shrink-0" aria-label="বিক্রি মুছুন" onClick={() => onDelete(sale.id)}>
-                <Trash2 className="h-4 w-4 text-red-500" />
-              </Button>
-            )}
+            <div className="mt-1 flex items-center justify-between gap-2">
+              <p className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-slate-500">
+                <span className="whitespace-nowrap">{fmt(new Date(sale.createdAt), 'd MMM, h:mm a')}</span>
+                <PaymentBadge sale={sale} />
+                {sale.customerName && <span className="max-w-[9rem] truncate">· {sale.customerName}</span>}
+              </p>
+              <div className="flex shrink-0 items-center">
+                {onInvoice && (
+                  <Button variant="ghost" size="icon" className="h-9 w-9" aria-label="ইনভয়েস" onClick={() => onInvoice(sale)}>
+                    <Printer className="h-4 w-4 text-blue-700" />
+                  </Button>
+                )}
+                {onReturn && (
+                  <Button variant="ghost" size="icon" className="h-9 w-9" aria-label="পণ্য ফেরত" onClick={() => onReturn(sale)}>
+                    <Undo2 className="h-4 w-4 text-amber-600" />
+                  </Button>
+                )}
+                {onDelete && (
+                  <Button variant="ghost" size="icon" className="h-9 w-9" aria-label="বিক্রি মুছুন" onClick={() => onDelete(sale.id)}>
+                    <Trash2 className="h-4 w-4 text-red-500" />
+                  </Button>
+                )}
+              </div>
+            </div>
           </li>
         ))}
       </ul>
@@ -1621,7 +1625,7 @@ function ExpenseTracking() {
                 {filtered.map(e => (
                   <li key={e.id} className="flex items-center gap-2 px-3 py-2.5">
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium">{e.description}</p>
+                      <p className="line-clamp-2 break-words text-sm font-medium">{e.description}</p>
                       <p className="text-[11px] text-slate-500">{fmt(new Date(e.createdAt), 'MMM d')} · {catOf(e.category)}</p>
                     </div>
                     <span className="text-sm font-semibold text-red-600">-{formatCurrency(e.amount)}</span>
@@ -1797,7 +1801,7 @@ function Reports() {
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                   <XAxis dataKey="date" tick={{ fontSize: 10 }} interval="preserveStartEnd" minTickGap={24} />
-                  <YAxis tick={{ fontSize: 10 }} width={42} />
+                  <YAxis tick={{ fontSize: 10 }} width={42} tickFormatter={compactNum} />
                   <Tooltip formatter={fmtTip} />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
                   <Area type="monotone" dataKey="sales" stroke="#1d4ed8" fill="url(#gSales)" name="বিক্রি" />
@@ -1834,7 +1838,7 @@ function Reports() {
                   <RechartsBar data={expenseByCategory}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                     <XAxis dataKey="name" tick={{ fontSize: 10 }} />
-                    <YAxis tick={{ fontSize: 10 }} width={42} />
+                    <YAxis tick={{ fontSize: 10 }} width={42} tickFormatter={compactNum} />
                     <Tooltip formatter={fmtTip} />
                     <Bar dataKey="value" radius={[4, 4, 0, 0]}>
                       {expenseByCategory.map(d => <Cell key={d.name} fill={d.color} />)}
@@ -1854,7 +1858,7 @@ function Reports() {
                 <ResponsiveContainer width="100%" height="100%">
                   <RechartsBar data={topProducts} layout="vertical" margin={{ left: 0, right: 12 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                    <XAxis type="number" tick={{ fontSize: 10 }} />
+                    <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={compactNum} />
                     <YAxis dataKey="name" type="category" tick={{ fontSize: 10 }} width={72} />
                     <Tooltip formatter={fmtTip} />
                     <Bar dataKey="revenue" fill="#1d4ed8" name="বিক্রি" radius={[0, 4, 4, 0]} />
@@ -1873,7 +1877,7 @@ function Reports() {
                 <ResponsiveContainer width="100%" height="100%">
                   <RechartsBar data={topProfit} layout="vertical" margin={{ left: 0, right: 12 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                    <XAxis type="number" tick={{ fontSize: 10 }} />
+                    <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={compactNum} />
                     <YAxis dataKey="name" type="category" tick={{ fontSize: 10 }} width={72} />
                     <Tooltip formatter={fmtTip} />
                     <Bar dataKey="profit" fill="#0d9488" name="লাভ" radius={[0, 4, 4, 0]} />
